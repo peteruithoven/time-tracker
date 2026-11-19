@@ -77,7 +77,7 @@ fn loading_page<T: Send + 'static>(
     let account = account.clone();
     glib::spawn_future_local(async move {
         let Some(token) = crate::sync::token_for(&account).await else {
-            error.set_description(Some(&gettext("The Fibery API token is missing. Reconnect the client.")));
+            error.set_description(Some(&gettext("The Fibery API key is missing. Enter it under New API Key on the client page.")));
             stack.set_visible_child_name("error");
             return;
         };

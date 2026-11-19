@@ -283,8 +283,15 @@ impl ClientsDialog {
         // Connection
         let connection = adw::PreferencesGroup::builder().title(gettext("Connection")).build();
         page.add(&connection);
+        // A new API key, e.g. after a reinstall or when it was revoked. Its
+        // own group, so a sync rebuilding the connection rows keeps what
+        // you're typing.
+        let key_group = adw::PreferencesGroup::new();
+        key_group.add(&self.api_key_row(client_id));
+        page.add(&key_group);
         // Disconnect gets its own group, like other destructive actions.
         let disconnect_group = adw::PreferencesGroup::new();
+        disconnect_group.bind_property("visible", &key_group, "visible").sync_create().build();
         let disconnect = adw::ButtonRow::builder().title(gettext("Disconnect")).build();
         disconnect.add_css_class("destructive-action");
         disconnect.connect_activated(clone!(
@@ -373,6 +380,50 @@ impl ClientsDialog {
         page.add(&archive);
 
         self.push_subpage(&navigation_page(&client.name, &page));
+    }
+
+    /// Entry for a new Fibery API key. It's checked with Fibery (it must be
+    /// the same user's) before it replaces the stored one.
+    fn api_key_row(&self, client_id: i64) -> adw::PasswordEntryRow {
+        let row = adw::PasswordEntryRow::builder()
+            .title(gettext("New API Key"))
+            .show_apply_button(true)
+            .build();
+        row.connect_apply(clone!(
+            #[weak(rename_to = dialog)]
+            self,
+            move |row| {
+                let token = row.text().trim().to_string();
+                let store = TimeTrackerApplication::get().store();
+                let Some(account) = store.account_for_client(client_id).ok().flatten() else {
+                    return;
+                };
+                if token.is_empty() {
+                    return;
+                }
+                row.set_sensitive(false);
+                glib::spawn_future_local(clone!(
+                    #[weak]
+                    dialog,
+                    #[weak]
+                    row,
+                    async move {
+                        let result = save_api_key(&account, token).await;
+                        row.set_sensitive(true);
+                        let message = match result {
+                            Ok(()) => {
+                                row.set_text("");
+                                crate::sync::sync(true);
+                                gettext("API key saved")
+                            }
+                            Err(err) => err,
+                        };
+                        dialog.add_toast(adw::Toast::new(&message));
+                    }
+                ));
+            }
+        ));
+        row
     }
 
     fn fill_connection(
@@ -740,6 +791,27 @@ impl ClientsDialog {
         let title = project.map(|p| p.name).unwrap_or_else(|| gettext("No Project"));
         self.push_subpage(&navigation_page(&title, &page));
     }
+}
+
+/// Checks that `token` works for the account's Fibery user, then stores
+/// it in the keyring (or the database when there's no keyring).
+async fn save_api_key(account: &crate::store::Account, token: String) -> Result<(), String> {
+    let (workspace, check) = (account.workspace.clone(), token.clone());
+    let user = gio::spawn_blocking(move || crate::fibery::Client::new(&workspace, &check).me())
+        .await
+        .map_err(|_| gettext("Checking the API key failed unexpectedly"))?
+        .map_err(|e| e.to_string())?;
+    if user.0 != account.user_id {
+        return Err(gettext("This API key belongs to another Fibery user ({})").replace("{}", &user.1));
+    }
+    let store = TimeTrackerApplication::get().store();
+    match crate::secrets::store_token(&account.workspace, &account.user_id, &token).await {
+        Ok(()) => store.set_account_token(account.id, None),
+        // Without a keyring, the database keeps it until a keyring works.
+        Err(_) => store.set_account_token(account.id, Some(&token)),
+    }
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// The rows below the script choice: its settings, API token and status.

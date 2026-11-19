@@ -193,7 +193,7 @@ async fn run(full: bool) -> Status {
             set_status(Status::Syncing);
         }
         let Some(token) = token_for(&account).await else {
-            let message = gettext("The Fibery API token is missing. Reconnect the client.");
+            let message = gettext("The Fibery API key is missing. Enter it under New API Key on the client page.");
             let _ = store.set_account_synced(account.id, format::now(), Some(&message));
             error = Some(message);
             continue;
