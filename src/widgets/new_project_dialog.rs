@@ -96,7 +96,15 @@ impl NewProjectDialog {
 
     fn setup(&self, client_id: Option<i64>) {
         let imp = self.imp();
-        let clients = TimeTrackerApplication::get().store().clients().unwrap_or_default();
+        // Projects of clients connected to Fibery come from Fibery.
+        let store = TimeTrackerApplication::get().store();
+        let connected: Vec<i64> = store.accounts().unwrap_or_default().iter().map(|a| a.client_id).collect();
+        let clients: Vec<Client> = store
+            .clients()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|c| !connected.contains(&c.id))
+            .collect();
 
         let names = gtk::StringList::new(&[]);
         for client in &clients {

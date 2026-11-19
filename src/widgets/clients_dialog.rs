@@ -335,9 +335,21 @@ impl ClientsDialog {
             self,
             #[weak]
             projects_group,
+            #[weak]
+            add,
             #[strong]
             project_rows,
-            move || dialog.fill_projects(&projects_group, &project_rows, client_id)
+            move || {
+                // Projects of clients connected to Fibery come from Fibery.
+                let connected = TimeTrackerApplication::get()
+                    .store()
+                    .account_for_client(client_id)
+                    .ok()
+                    .flatten()
+                    .is_some();
+                add.set_visible(!connected);
+                dialog.fill_projects(&projects_group, &project_rows, client_id)
+            }
         );
         refresh_projects();
         self.on_data_changed(refresh_projects);
@@ -851,10 +863,12 @@ fn fill_tasks(group: &adw::PreferencesGroup, section: &Section<adw::ActionRow>, 
     }
     let mut new_rows = Vec::new();
     for task in tasks {
+        // Fibery tasks are done when they're finished in Fibery.
         let check = gtk::CheckButton::builder()
             .active(task.done)
             .valign(gtk::Align::Center)
-            .tooltip_text(gettext("Done"))
+            .sensitive(!task.is_remote)
+            .tooltip_text(if task.is_remote { gettext("Done when finished in Fibery") } else { gettext("Done") })
             .build();
         let row = adw::ActionRow::builder()
             .title(&task.name)
