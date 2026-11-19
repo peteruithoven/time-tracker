@@ -103,6 +103,12 @@ CREATE INDEX tasks_remote ON tasks(remote_id);
 CREATE INDEX projects_remote ON projects(remote_id);
 
 CREATE VIEW live_entries AS SELECT * FROM entries WHERE deleted = 0;
+"#, r#"
+-- Id of an invoice script (see src/invoicing) enabled for the client.
+ALTER TABLE clients ADD COLUMN invoice_script TEXT;
+"#, r#"
+-- Settings of the invoice script (JSON), e.g. a template invoice address.
+ALTER TABLE clients ADD COLUMN invoice_settings TEXT;
 "#];
 
 const TASK_SELECT: &str = "
@@ -113,7 +119,7 @@ const TASK_SELECT: &str = "
     LEFT JOIN projects p ON p.id = t.project_id";
 
 const CLIENT_SELECT: &str = "
-    SELECT id, name, billable, hourly_rate_cents, source, archived FROM clients";
+    SELECT id, name, billable, hourly_rate_cents, source, archived, invoice_script, invoice_settings FROM clients";
 
 const PROJECT_SELECT: &str = "
     SELECT p.id, p.name, p.color, p.client_id, c.name, p.remote_id IS NOT NULL,
@@ -218,6 +224,15 @@ impl Store {
                 client.archived,
                 client.id
             ],
+        )?;
+        Ok(())
+    }
+
+    /// Enables an invoice script with its settings (JSON), or disables it.
+    pub fn set_client_invoice_script(&self, id: i64, script: Option<&str>, settings: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE clients SET invoice_script = ?1, invoice_settings = ?2 WHERE id = ?3",
+            params![script, settings, id],
         )?;
         Ok(())
     }
@@ -481,6 +496,8 @@ fn client_from_row(row: &Row) -> Result<Client> {
         hourly_rate_cents: row.get(3)?,
         source: row.get(4)?,
         archived: row.get(5)?,
+        invoice_script: row.get(6)?,
+        invoice_settings: row.get(7)?,
     })
 }
 

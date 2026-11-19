@@ -7,6 +7,10 @@ pub struct Client {
     /// Connected service, e.g. `"fibery"`. `None` for local clients.
     pub source: Option<String>,
     pub archived: bool,
+    /// Enabled invoice script, see `crate::invoicing`.
+    pub invoice_script: Option<String>,
+    /// The script's settings (JSON).
+    pub invoice_settings: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

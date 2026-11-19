@@ -3,6 +3,7 @@ mod config;
 mod fibery;
 mod format;
 mod fuzzy;
+mod invoicing;
 mod report;
 mod secrets;
 mod store;

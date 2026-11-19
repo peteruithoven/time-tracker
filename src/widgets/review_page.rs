@@ -73,6 +73,10 @@ mod imp {
         pub compact: Cell<bool>,
 
         pub client_filter: gtk::DropDown,
+        /// Client filter plus the invoice button; moves between the toolbar
+        /// and its own row in the narrow layout.
+        pub filter_box: gtk::Box,
+        pub invoice_button: gtk::Button,
         /// Client id per drop-down item after "All Clients".
         pub filter_clients: RefCell<Vec<i64>>,
         pub month: Cell<(i32, u32)>,
@@ -133,7 +137,23 @@ impl ReviewPage {
         }
 
         imp.client_filter.set_tooltip_text(Some(&gettext("Filter by Client")));
-        imp.filter_slot.append(&imp.client_filter);
+        imp.filter_box.set_spacing(6);
+        imp.filter_box.append(&imp.client_filter);
+        imp.invoice_button.set_child(Some(
+            &adw::ButtonContent::builder()
+                .icon_name("x-office-document-symbolic")
+                .label(gettext("Create Invoice"))
+                .build(),
+        ));
+        imp.invoice_button.set_tooltip_text(Some(&gettext("Create this month's invoice")));
+        imp.invoice_button.set_visible(false);
+        imp.invoice_button.connect_clicked(clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_| page.confirm_invoice()
+        ));
+        imp.filter_box.append(&imp.invoice_button);
+        imp.filter_slot.append(&imp.filter_box);
         imp.client_filter.connect_selected_notify(clone!(
             #[weak(rename_to = page)]
             self,
@@ -175,7 +195,7 @@ impl ReviewPage {
     fn apply_compact(&self) {
         let imp = self.imp();
         let compact = imp.compact.get();
-        let filter = &imp.client_filter;
+        let filter = &imp.filter_box;
         let target = if compact { &*imp.compact_filter_slot } else { &*imp.filter_slot };
         if filter.parent().as_ref() != Some(target.upcast_ref()) {
             if let Some(parent) = filter.parent().and_downcast::<gtk::Box>() {
@@ -322,6 +342,7 @@ impl ReviewPage {
             table.append(&self.data_row("total", name, &report.totals, Scope::All, &weeks));
         }
         imp.report.replace(Some(report));
+        self.update_invoice_button();
     }
 
     fn header_row(&self, weeks: &[Week]) -> gtk::Box {
@@ -448,6 +469,143 @@ impl ReviewPage {
         } else {
             first
         }
+    }
+
+    /// The invoice script of the filtered client, if it has one.
+    fn invoice_script(&self) -> Option<(crate::store::Client, &'static crate::invoicing::Script)> {
+        let client_id = self.filtered_client()?;
+        let client = TimeTrackerApplication::get().store().client(client_id).ok().flatten()?;
+        let script = crate::invoicing::find(client.invoice_script.as_deref()?)?;
+        Some((client, script))
+    }
+
+    fn update_invoice_button(&self) {
+        let imp = self.imp();
+        let has_time = imp.report.borrow().as_ref().is_some_and(|r| r.totals.total > 0);
+        imp.invoice_button.set_visible(self.invoice_script().is_some());
+        imp.invoice_button.set_sensitive(has_time);
+    }
+
+    /// Hours and rate per project of the client in the shown month, with
+    /// each entry rounded to Fibery's two decimals first.
+    fn invoice_request(&self, client: &crate::store::Client) -> crate::invoicing::Request {
+        let imp = self.imp();
+        let (year, month) = imp.month.get();
+        let now = format::now();
+        let store = TimeTrackerApplication::get().store();
+        let project_rates: std::collections::HashMap<i64, Option<i64>> = store
+            .client_projects(client.id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| (p.id, p.hourly_rate_cents))
+            .collect();
+        let mut lines: Vec<(Option<i64>, crate::invoicing::ProjectHours)> = Vec::new();
+        for entry in imp.entries.borrow().iter().filter(|e| e.client_id == client.id) {
+            let hours = crate::fibery::sync::hours(entry.duration(now));
+            match lines.iter_mut().find(|(id, _)| *id == entry.project_id) {
+                Some((_, line)) => line.hours += hours,
+                None => {
+                    let rate = entry
+                        .project_id
+                        .and_then(|id| project_rates.get(&id).copied().flatten())
+                        .or(client.hourly_rate_cents);
+                    lines.push((
+                        entry.project_id,
+                        crate::invoicing::ProjectHours { project: entry.project_name.clone(), hours, hourly_rate_cents: rate },
+                    ));
+                }
+            }
+        }
+        let mut projects: Vec<_> = lines.into_iter().map(|(_, line)| line).filter(|l| l.hours > 0.0).collect();
+        projects.sort_by_key(|p| (p.project.is_none(), p.project.clone().unwrap_or_default().to_lowercase()));
+        crate::invoicing::Request { year, month, days_in_month: report::days_in_month(year, month), projects }
+    }
+
+    fn confirm_invoice(&self) {
+        let Some((client, script)) = self.invoice_script() else {
+            return;
+        };
+        let (year, month) = self.imp().month.get();
+        let request = self.invoice_request(&client);
+        let lines: Vec<String> = request
+            .projects
+            .iter()
+            .map(|p| {
+                let name = p.project.clone().unwrap_or_else(|| gettext("No Project"));
+                format!("{name}: {:.2} h → {}", p.hours, (script.describe_line)(p))
+            })
+            .collect();
+        let alert = adw::AlertDialog::new(
+            Some(&gettext("Create Invoice?")),
+            Some(
+                &gettext("“{script}” creates a draft for {client}, {month}, and opens it in your browser.")
+                    .replace("{script}", script.name)
+                    .replace("{client}", &client.name)
+                    .replace("{month}", &format::month_label(year, month)),
+            ),
+        );
+        let list = gtk::Label::builder()
+            .label(lines.join("\n"))
+            .wrap(true)
+            .xalign(0.0)
+            .css_classes(["numeric"])
+            .build();
+        alert.set_extra_child(Some(&list));
+        alert.add_responses(&[("cancel", &gettext("_Cancel")), ("create", &gettext("_Create Draft"))]);
+        alert.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+        alert.set_default_response(Some("create"));
+        alert.set_close_response("cancel");
+        let client_id = client.id;
+        let settings = crate::invoicing::parse_settings(client.invoice_settings.as_deref());
+        alert.connect_response(
+            Some("create"),
+            clone!(
+                #[weak(rename_to = page)]
+                self,
+                move |_, _| page.create_invoice(script, client_id, settings.clone(), request.clone())
+            ),
+        );
+        alert.present(Some(self));
+    }
+
+    fn create_invoice(
+        &self,
+        script: &'static crate::invoicing::Script,
+        client_id: i64,
+        settings: crate::invoicing::Settings,
+        request: crate::invoicing::Request,
+    ) {
+        let button = self.imp().invoice_button.clone();
+        button.set_sensitive(false);
+        glib::spawn_future_local(clone!(
+            #[weak(rename_to = page)]
+            self,
+            async move {
+                let result = match crate::secrets::load_invoice_token(script.id, client_id).await {
+                    Ok(Some(token)) => gio::spawn_blocking(move || (script.create)(&token, &settings, &request))
+                        .await
+                        .unwrap_or_else(|_| Err(gettext("Creating the invoice failed unexpectedly"))),
+                    Ok(None) => Err(gettext("No API token is set. Add it under Clients & Projects.")),
+                    Err(err) => Err(gettext("Could not read the keyring: {}").replace("{}", &err)),
+                };
+                page.update_invoice_button();
+                match result {
+                    Ok(url) => {
+                        let window = page.root().and_downcast::<gtk::Window>();
+                        gtk::UriLauncher::new(&url).launch(window.as_ref(), gio::Cancellable::NONE, |result| {
+                            if let Err(err) = result {
+                                glib::g_warning!("time-tracker", "Could not open the invoice: {err}");
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        let alert = adw::AlertDialog::new(Some(&gettext("Invoice Not Created")), Some(&err));
+                        alert.add_response("close", &gettext("_Close"));
+                        alert.present(Some(&page));
+                    }
+                }
+            }
+        ));
     }
 
     /// Asks where to save the shown month's entries (respecting the client
