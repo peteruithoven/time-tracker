@@ -85,7 +85,13 @@ Run it:
 flatpak run nl.peteruithoven.TimeTracker.Devel
 ```
 
-For the regular version, use `build-aux/nl.peteruithoven.TimeTracker.json` and run `nl.peteruithoven.TimeTracker`. Both can be installed side by side, each with its own data.
+For the regular version, use `build-aux/nl.peteruithoven.TimeTracker.json` with its own build folder and run `nl.peteruithoven.TimeTracker`:
+
+```bash
+flatpak-builder --user --install --force-clean build-dir-release build-aux/nl.peteruithoven.TimeTracker.json
+```
+
+Both can be installed side by side, each with its own data. To move your data from one to the other, quit both and copy `data/time-tracker/` and `config/glib-2.0/settings/keyfile` between their folders in `~/.var/app/`. API keys stay behind, as each app has its own keyring: enter them again under New API Key (Fibery) and API Token (invoice scripts) on the client page.
 
 The build fetches crates from crates.io, so it needs network access.
 

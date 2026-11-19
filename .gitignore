@@ -1,6 +1,7 @@
 /target/
 /_build/
 /build-dir/
+/build-dir-release/
 /.flatpak-builder/
 /.flatpak/
 /repo/
