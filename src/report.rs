@@ -1,6 +1,7 @@
 //! Aggregates a month of entries into a client › project › task tree with
 //! a total per week, for the Review view.
 
+use crate::format;
 use crate::store::Entry;
 
 /// A week (Monday–Sunday) clipped to the month, as day numbers.
@@ -178,6 +179,38 @@ pub fn build(entries: &[Entry], weeks: &[Week], now: i64) -> Report {
     report
 }
 
+/// Entries as CSV, one row per entry, for spreadsheets and invoicing.
+/// Hours are decimal with two digits, like Fibery's "Time spent".
+pub fn csv(entries: &[Entry], now: i64) -> String {
+    let mut out = String::from("Date,Client,Project,Task,Start,End,Hours,Note\n");
+    for entry in entries {
+        let time = |ts: Option<i64>| ts.map(format::clock_time).unwrap_or_default();
+        let hours = format!("{:.2}", entry.duration(now) as f64 / 3600.0);
+        let fields = [
+            entry.date.as_str(),
+            &entry.client_name,
+            entry.project_name.as_deref().unwrap_or_default(),
+            &entry.task_name,
+            &time(entry.start_at),
+            &time(entry.end_at),
+            &hours,
+            &entry.note,
+        ];
+        let row: Vec<String> = fields.iter().map(|f| csv_field(f)).collect();
+        out.push_str(&row.join(","));
+        out.push('\n');
+    }
+    out
+}
+
+fn csv_field(value: &str) -> String {
+    if value.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +253,18 @@ mod tests {
             client_is_remote: false,
             project_id: project,
         }
+    }
+
+    #[test]
+    fn exports_csv() {
+        let mut first = entry(1, Some(10), 100, "2026-11-02", 5_400);
+        first.note = "Call, \"quick\"".into();
+        let second = entry(2, None, 100, "2026-11-03", 1_234);
+        let csv = csv(&[first, second], 0);
+        let lines: Vec<_> = csv.lines().collect();
+        assert_eq!(lines[0], "Date,Client,Project,Task,Start,End,Hours,Note");
+        assert_eq!(lines[1], r#"2026-11-02,Client 100,Project 10,Task 1,,,1.50,"Call, ""quick""""#);
+        assert_eq!(lines[2], "2026-11-03,Client 100,,Task 2,,,0.34,");
     }
 
     #[test]

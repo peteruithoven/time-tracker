@@ -73,10 +73,18 @@ CREATE UNIQUE INDEX entries_one_running ON entries((end_at IS NULL))
 
 const TASK_SELECT: &str = "
     SELECT t.id, t.name, t.client_id, c.name, c.source, t.project_id, p.name, p.color,
-           t.remote_id IS NOT NULL, t.last_used_at
+           t.remote_id IS NOT NULL, t.last_used_at, t.done
     FROM tasks t
     JOIN clients c ON c.id = t.client_id
     LEFT JOIN projects p ON p.id = t.project_id";
+
+const CLIENT_SELECT: &str = "
+    SELECT id, name, billable, hourly_rate_cents, source, archived FROM clients";
+
+const PROJECT_SELECT: &str = "
+    SELECT p.id, p.name, p.color, p.client_id, c.name, p.remote_id IS NOT NULL,
+           p.hourly_rate_cents, p.archived
+    FROM projects p JOIN clients c ON c.id = p.client_id";
 
 const ENTRY_SELECT: &str = "
     SELECT e.id, e.task_id, t.name, p.name, c.name, p.color, t.remote_id IS NOT NULL,
@@ -137,21 +145,23 @@ impl Store {
 
     // ---- Clients & projects -------------------------------------------------
 
+    /// Active clients, by name.
     pub fn clients(&self) -> Result<Vec<Client>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name, billable, hourly_rate_cents, source
-             FROM clients WHERE archived = 0 ORDER BY name COLLATE NOCASE",
-        )?;
-        stmt.query_map([], |row| {
-            Ok(Client {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                billable: row.get(2)?,
-                hourly_rate_cents: row.get(3)?,
-                source: row.get(4)?,
-            })
-        })?
-        .collect()
+        let sql = format!("{CLIENT_SELECT} WHERE archived = 0 ORDER BY name COLLATE NOCASE");
+        let mut stmt = self.conn.prepare(&sql)?;
+        stmt.query_map([], client_from_row)?.collect()
+    }
+
+    /// All clients including archived ones (those last).
+    pub fn all_clients(&self) -> Result<Vec<Client>> {
+        let sql = format!("{CLIENT_SELECT} ORDER BY archived, name COLLATE NOCASE");
+        let mut stmt = self.conn.prepare(&sql)?;
+        stmt.query_map([], client_from_row)?.collect()
+    }
+
+    pub fn client(&self, id: i64) -> Result<Option<Client>> {
+        let sql = format!("{CLIENT_SELECT} WHERE id = ?1");
+        self.conn.query_row(&sql, [id], client_from_row).optional()
     }
 
     pub fn create_client(&self, name: &str, now: i64) -> Result<i64> {
@@ -162,25 +172,44 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Saves name, billing and archived state.
+    pub fn update_client(&self, client: &Client) -> Result<()> {
+        self.conn.execute(
+            "UPDATE clients SET name = ?1, billable = ?2, hourly_rate_cents = ?3, archived = ?4
+             WHERE id = ?5",
+            params![
+                client.name.trim(),
+                client.billable,
+                client.hourly_rate_cents,
+                client.archived,
+                client.id
+            ],
+        )?;
+        Ok(())
+    }
+
     /// Active projects, ordered by client and name.
     pub fn projects(&self) -> Result<Vec<Project>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT p.id, p.name, p.color, p.client_id, c.name, p.remote_id IS NOT NULL
-             FROM projects p JOIN clients c ON c.id = p.client_id
-             WHERE p.archived = 0 AND c.archived = 0
-             ORDER BY c.name COLLATE NOCASE, p.name COLLATE NOCASE",
-        )?;
-        stmt.query_map([], |row| {
-            Ok(Project {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                color: row.get(2)?,
-                client_id: row.get(3)?,
-                client_name: row.get(4)?,
-                is_remote: row.get(5)?,
-            })
-        })?
-        .collect()
+        let sql = format!(
+            "{PROJECT_SELECT} WHERE p.archived = 0 AND c.archived = 0
+             ORDER BY c.name COLLATE NOCASE, p.name COLLATE NOCASE"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        stmt.query_map([], project_from_row)?.collect()
+    }
+
+    /// A client's projects including archived ones (those last).
+    pub fn client_projects(&self, client_id: i64) -> Result<Vec<Project>> {
+        let sql = format!(
+            "{PROJECT_SELECT} WHERE p.client_id = ?1 ORDER BY p.archived, p.name COLLATE NOCASE"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        stmt.query_map([client_id], project_from_row)?.collect()
+    }
+
+    pub fn project(&self, id: i64) -> Result<Option<Project>> {
+        let sql = format!("{PROJECT_SELECT} WHERE p.id = ?1");
+        self.conn.query_row(&sql, [id], project_from_row).optional()
     }
 
     pub fn create_project(&self, client_id: i64, name: &str, color: &str, now: i64) -> Result<i64> {
@@ -189,6 +218,22 @@ impl Store {
             params![client_id, name.trim(), color, now],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Saves name, color, rate and archived state.
+    pub fn update_project(&self, project: &Project) -> Result<()> {
+        self.conn.execute(
+            "UPDATE projects SET name = ?1, color = ?2, hourly_rate_cents = ?3, archived = ?4
+             WHERE id = ?5",
+            params![
+                project.name.trim(),
+                project.color,
+                project.hourly_rate_cents,
+                project.archived,
+                project.id
+            ],
+        )?;
+        Ok(())
     }
 
     // ---- Tasks ---------------------------------------------------------------
@@ -215,6 +260,23 @@ impl Store {
             "{TASK_SELECT} WHERE t.last_used_at IS NOT NULL ORDER BY t.last_used_at DESC LIMIT 1"
         );
         self.conn.query_row(&sql, [], task_from_row).optional()
+    }
+
+    /// All tasks of a client's project (or of the client without a project),
+    /// open ones first.
+    pub fn project_tasks(&self, client_id: i64, project_id: Option<i64>) -> Result<Vec<Task>> {
+        let sql = format!(
+            "{TASK_SELECT} WHERE t.client_id = ?1 AND t.project_id IS ?2
+             ORDER BY t.done, t.name COLLATE NOCASE"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        stmt.query_map(params![client_id, project_id], task_from_row)?.collect()
+    }
+
+    /// Done tasks are hidden from the task picker.
+    pub fn set_task_done(&self, id: i64, done: bool) -> Result<()> {
+        self.conn.execute("UPDATE tasks SET done = ?1 WHERE id = ?2", params![done, id])?;
+        Ok(())
     }
 
     pub fn create_task(
@@ -370,6 +432,30 @@ fn stop_running(conn: &Connection, now: i64) -> Result<usize> {
     )
 }
 
+fn client_from_row(row: &Row) -> Result<Client> {
+    Ok(Client {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        billable: row.get(2)?,
+        hourly_rate_cents: row.get(3)?,
+        source: row.get(4)?,
+        archived: row.get(5)?,
+    })
+}
+
+fn project_from_row(row: &Row) -> Result<Project> {
+    Ok(Project {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        color: row.get(2)?,
+        client_id: row.get(3)?,
+        client_name: row.get(4)?,
+        is_remote: row.get(5)?,
+        hourly_rate_cents: row.get(6)?,
+        archived: row.get(7)?,
+    })
+}
+
 fn task_from_row(row: &Row) -> Result<Task> {
     Ok(Task {
         id: row.get(0)?,
@@ -382,6 +468,7 @@ fn task_from_row(row: &Row) -> Result<Task> {
         color: row.get(7)?,
         is_remote: row.get(8)?,
         last_used_at: row.get(9)?,
+        done: row.get(10)?,
     })
 }
 
@@ -531,6 +618,39 @@ mod tests {
         assert_eq!(november.len(), 2);
         let totals = store.month_totals(2026, 0).unwrap();
         assert_eq!((totals[9], totals[10], totals[0]), (600, 180, 0));
+    }
+
+    #[test]
+    fn manages_clients_projects_and_tasks() {
+        let (store, client_id, task) = store_with_task();
+        let mut client = store.client(client_id).unwrap().unwrap();
+        client.name = "Me".into();
+        client.hourly_rate_cents = Some(8_500);
+        client.archived = true;
+        store.update_client(&client).unwrap();
+        assert!(store.clients().unwrap().is_empty(), "archived clients are hidden");
+        assert_eq!(store.all_clients().unwrap()[0], client);
+        assert!(store.open_tasks().unwrap().is_empty(), "so are their tasks");
+
+        client.archived = false;
+        store.update_client(&client).unwrap();
+        let mut project = store.client_projects(client_id).unwrap().remove(0);
+        project.color = "red".into();
+        project.hourly_rate_cents = Some(9_000);
+        project.archived = true;
+        store.update_project(&project).unwrap();
+        assert_eq!(store.project(project.id).unwrap().unwrap(), project);
+        assert!(store.projects().unwrap().is_empty());
+        assert!(store.open_tasks().unwrap().is_empty(), "tasks of archived projects are hidden");
+
+        project.archived = false;
+        store.update_project(&project).unwrap();
+        store.set_task_done(task, true).unwrap();
+        assert!(store.open_tasks().unwrap().is_empty(), "done tasks are hidden");
+        let tasks = store.project_tasks(client_id, Some(project.id)).unwrap();
+        assert!(tasks[0].done);
+        let no_project = store.create_task(client_id, None, "Loose", 0).unwrap();
+        assert_eq!(store.project_tasks(client_id, None).unwrap()[0].id, no_project);
     }
 
     #[test]

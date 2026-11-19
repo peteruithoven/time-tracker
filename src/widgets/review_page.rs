@@ -6,8 +6,8 @@ use std::collections::HashSet;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gettextrs::gettext;
-use gtk::glib;
 use gtk::glib::clone;
+use gtk::{gio, glib};
 
 use crate::application::TimeTrackerApplication;
 use crate::format;
@@ -57,6 +57,8 @@ mod imp {
         pub filter_slot: TemplateChild<gtk::Box>,
         #[template_child]
         pub compact_filter_slot: TemplateChild<gtk::Box>,
+        #[template_child]
+        pub export_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub add_button: TemplateChild<gtk::Button>,
         #[template_child]
@@ -182,6 +184,9 @@ impl ReviewPage {
             target.append(filter);
         }
         imp.compact_filter_slot.set_visible(compact);
+        imp.filter_slot.set_visible(!compact);
+        // Too wide for a 360px window; export stays in the menu (Ctrl+E).
+        imp.export_button.set_visible(!compact);
         imp.add_button_content.set_label(&if compact { String::new() } else { gettext("Add Time") });
         self.rebuild_table();
     }
@@ -443,6 +448,53 @@ impl ReviewPage {
         } else {
             first
         }
+    }
+
+    /// Asks where to save the shown month's entries (respecting the client
+    /// filter) as CSV, then writes the file.
+    pub fn export_csv(&self) {
+        let imp = self.imp();
+        let (year, month) = imp.month.get();
+        let filter = self.filtered_client();
+        let entries: Vec<Entry> = imp
+            .entries
+            .borrow()
+            .iter()
+            .filter(|e| filter.is_none_or(|id| e.client_id == id))
+            .cloned()
+            .collect();
+        let csv = report::csv(&entries, format::now());
+
+        let client = filter.and_then(|id| entries.iter().find(|e| e.client_id == id)).map(|e| e.client_name.clone());
+        let name = match client {
+            Some(client) => format!("{client} {year}-{month:02}.csv"),
+            None => format!("{} {year}-{month:02}.csv", gettext("Time Tracker")),
+        };
+        let filter = gtk::FileFilter::new();
+        filter.set_name(Some(&gettext("CSV Files")));
+        filter.add_mime_type("text/csv");
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
+        let dialog = gtk::FileDialog::builder()
+            .title(gettext("Export Month"))
+            .initial_name(name)
+            .filters(&filters)
+            .build();
+        let window = self.root().and_downcast::<gtk::Window>();
+        dialog.save(window.as_ref(), gio::Cancellable::NONE, move |result| {
+            let Ok(file) = result else {
+                return; // Cancelled
+            };
+            if let Err(err) = file.replace_contents(
+                csv.as_bytes(),
+                None,
+                false,
+                gio::FileCreateFlags::REPLACE_DESTINATION,
+                gio::Cancellable::NONE,
+            ) {
+                glib::g_critical!("time-tracker", "Could not export: {err}");
+            }
+        });
     }
 
     fn add_time(&self, task_id: Option<i64>, date: &str) {

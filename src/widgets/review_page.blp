@@ -55,6 +55,12 @@ template $ReviewPage: Adw.Bin {
 
         Box filter_slot {}
 
+        Button export_button {
+          icon-name: "document-save-symbolic";
+          tooltip-text: _("Export Month as CSV");
+          action-name: "win.export";
+        }
+
         Button add_button {
           tooltip-text: _("Add Time");
 

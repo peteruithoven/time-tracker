@@ -14,6 +14,8 @@ mod imp {
         pub view_toggle: TemplateChild<adw::ToggleGroup>,
         #[template_child]
         pub view_stack: TemplateChild<adw::ViewStack>,
+        #[template_child]
+        pub review_page: TemplateChild<crate::widgets::ReviewPage>,
         pub settings: gio::Settings,
     }
 
@@ -22,6 +24,7 @@ mod imp {
             Self {
                 view_toggle: TemplateChild::default(),
                 view_stack: TemplateChild::default(),
+                review_page: TemplateChild::default(),
                 settings: gio::Settings::new(APP_ID),
             }
         }
@@ -63,6 +66,16 @@ mod imp {
                 .bidirectional()
                 .sync_create()
                 .build();
+
+            // Export the month shown in Review (switching to it if needed).
+            let export = gio::ActionEntry::builder("export")
+                .activate(|window: &super::TimeTrackerWindow, _, _| {
+                    let imp = window.imp();
+                    imp.view_stack.set_visible_child_name("review");
+                    imp.review_page.export_csv();
+                })
+                .build();
+            obj.add_action_entries([export]);
 
             obj.load_window_size();
         }

@@ -12,7 +12,7 @@ use gtk::glib::clone;
 use crate::application::TimeTrackerApplication;
 use crate::format;
 use crate::store::Client;
-use crate::widgets::PROJECT_COLORS;
+use crate::widgets::{PROJECT_COLORS, color_label};
 
 mod imp {
     use super::*;
@@ -207,18 +207,5 @@ impl NewProjectDialog {
             }
             Err(err) => glib::g_critical!("time-tracker", "Could not create the project: {err}"),
         }
-    }
-}
-
-fn color_label(color: &str) -> String {
-    match color {
-        "blue" => gettext("Blue"),
-        "green" => gettext("Green"),
-        "yellow" => gettext("Yellow"),
-        "orange" => gettext("Orange"),
-        "red" => gettext("Red"),
-        "purple" => gettext("Purple"),
-        "brown" => gettext("Brown"),
-        _ => gettext("Slate"),
     }
 }

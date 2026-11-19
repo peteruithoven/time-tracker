@@ -6,6 +6,7 @@ pub struct Client {
     pub hourly_rate_cents: Option<i64>,
     /// Connected service, e.g. `"fibery"`. `None` for local clients.
     pub source: Option<String>,
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -16,6 +17,9 @@ pub struct Project {
     pub client_id: i64,
     pub client_name: String,
     pub is_remote: bool,
+    /// Overrides the client's rate when set.
+    pub hourly_rate_cents: Option<i64>,
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +35,7 @@ pub struct Task {
     pub color: Option<String>,
     pub is_remote: bool,
     pub last_used_at: Option<i64>,
+    pub done: bool,
 }
 
 impl Task {

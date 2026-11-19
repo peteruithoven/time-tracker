@@ -3,6 +3,7 @@ data/nl.peteruithoven.TimeTracker.metainfo.xml.in.in
 data/nl.peteruithoven.TimeTracker.gschema.xml.in
 src/application.rs
 src/main.rs
+src/widgets/clients_dialog.rs
 src/widgets/entry_dialog.blp
 src/widgets/entry_dialog.rs
 src/widgets/month_picker.rs

@@ -60,6 +60,18 @@ template $TimeTrackerWindow: Adw.ApplicationWindow {
 menu primary_menu {
   section {
     item {
+      label: _("_Clients & Projects");
+      action: "app.clients";
+    }
+
+    item {
+      label: _("_Export Month…");
+      action: "win.export";
+    }
+  }
+
+  section {
+    item {
       label: _("_About Time Tracker");
       action: "app.about";
     }

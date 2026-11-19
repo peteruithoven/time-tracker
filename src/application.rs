@@ -107,12 +107,18 @@ impl TimeTrackerApplication {
         let about = gio::ActionEntry::builder("about")
             .activate(|app: &Self, _, _| app.show_about())
             .build();
-        self.add_action_entries([quit, about]);
+        let clients = gio::ActionEntry::builder("clients")
+            .activate(|app: &Self, _, _| {
+                crate::widgets::ClientsDialog::default().present(app.active_window().as_ref());
+            })
+            .build();
+        self.add_action_entries([quit, about, clients]);
     }
 
     fn setup_accels(&self) {
         self.set_accels_for_action("app.quit", &["<Control>q"]);
         self.set_accels_for_action("window.close", &["<Control>w"]);
+        self.set_accels_for_action("win.export", &["<Control>e"]);
     }
 
     fn show_about(&self) {

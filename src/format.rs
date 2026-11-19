@@ -43,6 +43,15 @@ pub fn today() -> String {
     local_date(now())
 }
 
+/// `€ 85` or `€ 85.50`
+pub fn euros(cents: i64) -> String {
+    if cents % 100 == 0 {
+        format!("€ {}", cents / 100)
+    } else {
+        format!("€ {}.{:02}", cents / 100, (cents % 100).abs())
+    }
+}
+
 pub fn date_string(year: i32, month: u32, day: u32) -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
@@ -188,6 +197,13 @@ mod tests {
         assert_eq!(parse_duration("1:75"), None);
         assert_eq!(parse_duration("-1"), None);
         assert_eq!(parse_duration("abc"), None);
+    }
+
+    #[test]
+    fn formats_euros() {
+        assert_eq!(euros(8_500), "€ 85");
+        assert_eq!(euros(8_550), "€ 85.50");
+        assert_eq!(euros(5), "€ 0.05");
     }
 
     #[test]
