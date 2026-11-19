@@ -27,6 +27,54 @@ pub struct Mapping {
     pub log_note: Option<String>,
     pub log_start: Option<String>,
     pub log_end: Option<String>,
+
+    /// The picker offers everyone's tasks, not just yours.
+    #[serde(default)]
+    pub show_everyone: bool,
+    /// Task states the picker offers; `None`: all unfinished states.
+    #[serde(default)]
+    pub task_states: Option<Vec<String>>,
+    /// Days a finished task stays in the picker.
+    #[serde(default)]
+    pub keep_done_days: u32,
+    /// Project states archived in the app; `None`: the finished states.
+    #[serde(default)]
+    pub hidden_project_states: Option<Vec<String>>,
+}
+
+impl Mapping {
+    /// Whether the picker offers a task in `state` (`finished` when it's a
+    /// final state), last changed `days_since_change` days ago.
+    pub fn shows_task(&self, state: Option<&str>, finished: bool, days_since_change: Option<i64>) -> bool {
+        let shown = match (&self.task_states, state) {
+            (Some(states), Some(state)) => states.iter().any(|s| s == state),
+            _ => !finished,
+        };
+        let recently_done = finished
+            && self.keep_done_days > 0
+            && days_since_change.is_some_and(|days| days < i64::from(self.keep_done_days));
+        shown || recently_done
+    }
+
+    /// Whether a project in `state` is archived in the app.
+    pub fn hides_project(&self, state: Option<&str>, finished: bool) -> bool {
+        match (&self.hidden_project_states, state) {
+            (Some(states), Some(state)) => states.iter().any(|s| s == state),
+            _ => finished,
+        }
+    }
+}
+
+/// Kinds of fields a mapping can point to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Kind {
+    /// A link to one entity of another database.
+    Relation,
+    Number,
+    Date,
+    DateTime,
+    User,
+    Text,
 }
 
 #[derive(Debug, Clone)]
@@ -121,12 +169,97 @@ fn parse(schema: &Value) -> Vec<Type> {
 
 /// Detects the mapping, or explains what's missing.
 pub fn detect(schema: &Value) -> Result<Mapping, String> {
-    let types = parse(schema);
-    let domain = |name: &str| types.iter().find(|t| t.name == name && t.domain);
+    detect_in(&parse(schema), None)
+}
 
+/// A parsed workspace schema, to offer choices when changing a mapping.
+#[derive(Debug, Clone)]
+pub struct Schema {
+    types: Vec<Type>,
+}
+
+impl Schema {
+    pub fn parse(schema: &Value) -> Self {
+        Self { types: parse(schema) }
+    }
+
+    fn domain(&self, name: &str) -> Option<&Type> {
+        self.types.iter().find(|t| t.name == name && t.domain)
+    }
+
+    /// Databases that can hold time logs, best guess first.
+    pub fn log_types(&self) -> Vec<String> {
+        log_candidates(&self.types).into_iter().map(|(_, ty, _)| ty.name.clone()).collect()
+    }
+
+    /// Detects the rest of a mapping for time logs in `log_type`.
+    pub fn detect_for_log(&self, log_type: &str) -> Result<Mapping, String> {
+        detect_in(&self.types, Some(log_type))
+    }
+
+    /// Fields of `ty` that a mapping of `kind` can use.
+    pub fn fields(&self, ty: &str, kind: Kind) -> Vec<String> {
+        let Some(ty) = self.domain(ty) else {
+            return Vec::new();
+        };
+        let fields: Vec<&Field> = match kind {
+            Kind::Relation => ty
+                .fields
+                .iter()
+                .filter(|f| !f.collection && !f.computed && f.ty != ty.name && self.domain(&f.ty).is_some())
+                .collect(),
+            Kind::Number => ty.writable("fibery/decimal").chain(ty.writable("fibery/int")).collect(),
+            Kind::Date => ty.writable("fibery/date").collect(),
+            Kind::DateTime => ty.writable("fibery/date-time").collect(),
+            Kind::User => ty
+                .fields
+                .iter()
+                .filter(|f| f.ty == "fibery/user" && !f.collection && !f.computed && !f.name.starts_with("fibery/"))
+                .collect(),
+            Kind::Text => ty.writable("fibery/text").filter(|f| !f.title).collect(),
+        };
+        fields.into_iter().map(|f| f.name.clone()).collect()
+    }
+
+    /// The database a relation field points to.
+    pub fn target(&self, ty: &str, field: &str) -> Option<String> {
+        self.domain(ty)?.field(field).map(|f| f.ty.clone())
+    }
+
+    /// The enum type holding the workflow states of `ty`, if it has them.
+    pub fn state_type(&self, ty: &str) -> Option<String> {
+        self.domain(ty)?.field("workflow/state").map(|f| f.ty.clone())
+    }
+
+    /// Points the mapping's task link to `field`, re-detecting the task's
+    /// fields when it links to another database.
+    pub fn set_log_task(&self, mapping: &mut Mapping, field: &str) {
+        mapping.log_task = field.to_string();
+        let Some(target) = self.target(&mapping.log_type, field) else {
+            return;
+        };
+        if target != mapping.task_type
+            && let Some(task) = self.domain(&target)
+        {
+            apply_task(&self.types, mapping, task);
+        }
+    }
+
+    /// Uses `field` of the task as its project link (`None`: no projects).
+    pub fn set_task_project(&self, mapping: &mut Mapping, field: Option<&str>) {
+        mapping.task_project = field.map(str::to_string);
+        let project = field.and_then(|f| self.target(&mapping.task_type, f)).and_then(|t| self.domain(&t));
+        apply_project(mapping, project);
+        mapping.hidden_project_states = None;
+    }
+}
+
+/// Domain types that can hold time logs, with their task link, best first.
+fn log_candidates(types: &[Type]) -> Vec<(i32, &Type, &Field)> {
+    let domain = |name: &str| types.iter().find(|t| t.name == name && t.domain);
     // Time logs: a database with a date, a number and a relation to another
     // database (the task). Prefer names like "Time log" / "Time entry".
-    let mut best: Option<(i32, &Type, &Field)> = None;
+    let mut candidates = Vec::new();
     for ty in types.iter().filter(|t| t.domain) {
         let has_date = ty.writable("fibery/date").next().is_some();
         let has_number = ty.writable("fibery/decimal").next().is_some() || ty.writable("fibery/int").next().is_some();
@@ -155,11 +288,21 @@ pub fn detect(schema: &Value) -> Result<Mapping, String> {
         if ty.fields.iter().any(|f| f.ty == "fibery/user" && !f.collection && !f.computed) {
             score += 3;
         }
-        if best.is_none_or(|(s, _, _)| score > s) {
-            best = Some((score, ty, task));
-        }
+        candidates.push((score, ty, task));
     }
-    let Some((_, log, log_task)) = best else {
+    // Stable: equal scores keep schema order.
+    candidates.sort_by_key(|(score, _, _)| -score);
+    candidates
+}
+
+fn detect_in(types: &[Type], log_type: Option<&str>) -> Result<Mapping, String> {
+    let domain = |name: &str| types.iter().find(|t| t.name == name && t.domain);
+    let candidates = log_candidates(types);
+    let found = match log_type {
+        Some(name) => candidates.into_iter().find(|(_, ty, _)| ty.name == name),
+        None => candidates.into_iter().next(),
+    };
+    let Some((_, log, log_task)) = found else {
         return Err("No time log database found (needs a date, a number and a link to tasks).".into());
     };
 
@@ -184,32 +327,9 @@ pub fn detect(schema: &Value) -> Result<Mapping, String> {
     let end = date_times.iter().find(|f| mentions(&f.name, &["end", "stop", "until"]));
 
     let task = domain(&log_task.ty).expect("checked above");
-    let task_name = task
-        .title()
-        .ok_or_else(|| format!("No name field found in {}.", task.name))?;
-    let task_project = task.fields.iter().find(|f| {
-        !f.collection && !f.computed && domain(&f.ty).is_some() && mentions(&f.ty, &["project"])
-    });
-    let project = task_project.and_then(|f| domain(&f.ty));
-    let state = |ty: &Type| ty.field("workflow/state").map(|f| f.name.clone());
+    task.title().ok_or_else(|| format!("No name field found in {}.", task.name))?;
 
-    Ok(Mapping {
-        task_type: task.name.clone(),
-        task_name: task_name.name.clone(),
-        task_project: task_project.map(|f| f.name.clone()),
-        task_state: state(task),
-        task_assignees: task
-            .fields
-            .iter()
-            .find(|f| f.ty == "fibery/user" && f.collection)
-            .map(|f| f.name.clone()),
-        task_timing: task
-            .writable("fibery/bool")
-            .find(|f| mentions(&f.name, &["timing", "timer"]))
-            .map(|f| f.name.clone()),
-        project_type: project.map(|p| p.name.clone()),
-        project_name: project.and_then(Type::title).map(|f| f.name.clone()),
-        project_state: project.and_then(state),
+    let mut mapping = Mapping {
         log_type: log.name.clone(),
         log_task: log_task.name.clone(),
         log_user: user.map(|f| f.name.clone()),
@@ -218,7 +338,43 @@ pub fn detect(schema: &Value) -> Result<Mapping, String> {
         log_note: note.map(|f| f.name.clone()),
         log_start: start.map(|f| f.name.clone()),
         log_end: end.map(|f| f.name.clone()),
-    })
+        ..Mapping::default()
+    };
+    apply_task(types, &mut mapping, task);
+    Ok(mapping)
+}
+
+fn state_field(ty: &Type) -> Option<String> {
+    ty.field("workflow/state").map(|f| f.name.clone())
+}
+
+/// Detects the task fields (and project) of `task` into `mapping`.
+fn apply_task(types: &[Type], mapping: &mut Mapping, task: &Type) {
+    let domain = |name: &str| types.iter().find(|t| t.name == name && t.domain);
+    let task_project = task.fields.iter().find(|f| {
+        !f.collection && !f.computed && domain(&f.ty).is_some() && mentions(&f.ty, &["project"])
+    });
+    mapping.task_type = task.name.clone();
+    mapping.task_name = task.title().map(|f| f.name.clone()).unwrap_or_default();
+    mapping.task_project = task_project.map(|f| f.name.clone());
+    mapping.task_state = state_field(task);
+    mapping.task_assignees = task
+        .fields
+        .iter()
+        .find(|f| f.ty == "fibery/user" && f.collection)
+        .map(|f| f.name.clone());
+    mapping.task_timing = task
+        .writable("fibery/bool")
+        .find(|f| mentions(&f.name, &["timing", "timer"]))
+        .map(|f| f.name.clone());
+    mapping.task_states = None;
+    apply_project(mapping, task_project.and_then(|f| domain(&f.ty)));
+}
+
+fn apply_project(mapping: &mut Mapping, project: Option<&Type>) {
+    mapping.project_type = project.map(|p| p.name.clone());
+    mapping.project_name = project.and_then(Type::title).map(|f| f.name.clone());
+    mapping.project_state = project.and_then(state_field);
 }
 
 /// Database names without the space, e.g. "Time log" for "Projects/Time log".
@@ -295,6 +451,7 @@ mod tests {
             log_note: Some("Projects/Notes (if any)".into()),
             log_start: Some("Projects/Start".into()),
             log_end: Some("Projects/End".into()),
+            ..Mapping::default()
         });
     }
 

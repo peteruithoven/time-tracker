@@ -202,6 +202,36 @@ impl Client {
     pub fn schema(&self) -> Result<Value> {
         self.command("fibery.schema/query", json!({}))
     }
+
+    /// Workflow states of an enum type such as `workflow/state_Space/Task`,
+    /// in order, with whether each is final.
+    pub fn states(&self, state_type: &str) -> Result<Vec<State>> {
+        let rows = self.query(
+            json!({
+                "q/from": state_type,
+                "q/select": { "name": "enum/name", "final": "workflow/Final" },
+                "q/order-by": [[["fibery/rank"], "q/asc"]],
+                "q/limit": 100
+            }),
+            json!({}),
+        )?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some(State {
+                    name: r["name"].as_str()?.to_string(),
+                    finished: r["final"].as_bool().unwrap_or(false),
+                })
+            })
+            .collect())
+    }
+}
+
+/// A workflow state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct State {
+    pub name: String,
+    pub finished: bool,
 }
 
 /// Checks a workspace and token, and detects the setup.

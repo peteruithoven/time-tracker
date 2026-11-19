@@ -43,7 +43,8 @@ pub struct PushResult {
 pub struct RemoteProject {
     pub id: String,
     pub name: String,
-    pub finished: bool,
+    /// In a state the mapping hides (by default: finished).
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -51,7 +52,8 @@ pub struct RemoteTask {
     pub id: String,
     pub name: String,
     pub project: Option<RemoteProject>,
-    pub finished: bool,
+    /// Not offered in the task picker (see `Mapping::shows_task`).
+    pub hidden: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -219,44 +221,44 @@ fn set_timing(client: &Client, m: &Mapping, task: &TaskRef, created: &[(i64, Str
     client.update(&m.task_type, json!({ "fibery/id": id, timing: on }))
 }
 
-/// Selects id, name and "finished" of a project or task.
+/// Selects id, name, state and whether that state is final.
 fn entity_select(name_field: &str, state_field: Option<&str>) -> Value {
     let mut select = json!({ "id": "fibery/id", "name": name_field });
     if let Some(state) = state_field {
         select["final"] = json!([state, "workflow/Final"]);
+        select["state"] = json!([state, "enum/name"]);
     }
     select
 }
 
-fn project_from(row: &Value) -> Option<RemoteProject> {
+fn project_from(row: &Value, m: &Mapping) -> Option<RemoteProject> {
     Some(RemoteProject {
         id: row["id"].as_str()?.to_string(),
         name: row["name"].as_str().unwrap_or_default().to_string(),
-        finished: row["final"].as_bool().unwrap_or(false),
+        archived: m.hides_project(row["state"].as_str(), row["final"].as_bool().unwrap_or(false)),
     })
 }
 
-fn task_from(row: &Value) -> Option<RemoteTask> {
+fn task_from(row: &Value, m: &Mapping, now: i64) -> Option<RemoteTask> {
+    let days_since_change = row["modified"].as_str().and_then(from_iso).map(|ts| (now - ts) / (24 * 60 * 60));
     Some(RemoteTask {
         id: row["id"].as_str()?.to_string(),
         name: row["name"].as_str().unwrap_or_default().to_string(),
-        project: row.get("project").and_then(project_from),
-        finished: row["final"].as_bool().unwrap_or(false),
+        project: row.get("project").and_then(|p| project_from(p, m)),
+        hidden: !m.shows_task(row["state"].as_str(), row["final"].as_bool().unwrap_or(false), days_since_change),
     })
 }
 
 fn task_select(m: &Mapping) -> Value {
     let mut select = entity_select(&m.task_name, m.task_state.as_deref());
+    select["modified"] = json!("fibery/modification-date");
+    // Flattened: Fibery selects related primitives with paths.
     if let (Some(field), Some(name)) = (&m.task_project, &m.project_name) {
-        let mut project = json!({ "id": [field, "fibery/id"], "name": [field, name] });
+        select["project_id"] = json!([field, "fibery/id"]);
+        select["project_name"] = json!([field, name]);
         if let Some(state) = &m.project_state {
-            project["final"] = json!([field, state, "workflow/Final"]);
-        }
-        // Flattened: Fibery selects related primitives with paths.
-        select["project_id"] = project["id"].clone();
-        select["project_name"] = project["name"].clone();
-        if let Some(fin) = project.get("final") {
-            select["project_final"] = fin.clone();
+            select["project_final"] = json!([field, state, "workflow/Final"]);
+            select["project_state"] = json!([field, state, "enum/name"]);
         }
     }
     select
@@ -269,13 +271,54 @@ fn nest_project(mut row: Value) -> Value {
             "id": id,
             "name": row["project_name"].clone(),
             "final": row.get("project_final").cloned().unwrap_or(Value::Null),
+            "state": row.get("project_state").cloned().unwrap_or(Value::Null),
         });
     }
     row
 }
 
+/// Which tasks to pull for the picker, with the query's parameters.
+fn task_filter(m: &Mapping, user_id: &str, now: i64) -> (Option<Value>, Map<String, Value>) {
+    let mut params = Map::new();
+    let mut conditions = Vec::new();
+    match (&m.task_assignees, m.show_everyone) {
+        (Some(assignees), false) => {
+            conditions.push(json!(["q/in", [assignees, "fibery/id"], "$me"]));
+            params.insert("$me".into(), json!([user_id]));
+        }
+        // Everyone's tasks can be many: only those the picker would show.
+        _ => {
+            if let Some(state) = &m.task_state {
+                let mut shown = match &m.task_states {
+                    Some(states) => {
+                        params.insert("$states".into(), json!(states));
+                        json!(["q/in", [state, "enum/name"], "$states"])
+                    }
+                    None => {
+                        params.insert("$unfinished".into(), json!(false));
+                        json!(["=", [state, "workflow/Final"], "$unfinished"])
+                    }
+                };
+                if m.keep_done_days > 0 {
+                    let since = now - i64::from(m.keep_done_days) * 24 * 60 * 60;
+                    params.insert("$changedSince".into(), json!(to_iso(since)));
+                    shown = json!(["q/or", shown, [">=", ["fibery/modification-date"], "$changedSince"]]);
+                }
+                conditions.push(shown);
+            }
+        }
+    }
+    let filter = match conditions.len() {
+        0 => None,
+        1 => conditions.pop(),
+        _ => Some(Value::Array(std::iter::once(json!("q/and")).chain(conditions).collect())),
+    };
+    (filter, params)
+}
+
 fn pull(client: &Client, m: &Mapping, user_id: &str, since: &str) -> Result<Pulled, Error> {
     let mut pulled = Pulled { since: since.to_string(), ..Default::default() };
+    let now = gtk::glib::DateTime::now_utc().map(|dt| dt.to_unix()).unwrap_or_default();
 
     if let (Some(ty), Some(name)) = (&m.project_type, &m.project_name) {
         let rows = client.query(
@@ -286,20 +329,31 @@ fn pull(client: &Client, m: &Mapping, user_id: &str, since: &str) -> Result<Pull
             }),
             json!({}),
         )?;
-        pulled.projects = rows.iter().filter_map(project_from).collect();
+        pulled.projects = rows.iter().filter_map(|r| project_from(r, m)).collect();
     }
 
-    // Tasks assigned to the user (the task picker's list).
-    let mut task_query = json!({
-        "q/from": m.task_type,
-        "q/select": task_select(m),
-        "q/limit": 1000
-    });
-    if let Some(assignees) = &m.task_assignees {
-        task_query["q/where"] = json!(["q/in", [assignees, "fibery/id"], "$me"]);
+    // The tasks for the picker.
+    let (filter, params) = task_filter(m, user_id, now);
+    let mut offset = 0;
+    loop {
+        let mut query = json!({
+            "q/from": m.task_type,
+            "q/select": task_select(m),
+            "q/order-by": [[["fibery/id"], "q/asc"]],
+            "q/offset": offset,
+            "q/limit": 500
+        });
+        if let Some(filter) = &filter {
+            query["q/where"] = filter.clone();
+        }
+        let rows = client.query(query, Value::Object(params.clone()))?;
+        let count = rows.len();
+        pulled.tasks.extend(rows.into_iter().map(nest_project).filter_map(|r| task_from(&r, m, now)));
+        if count < 500 {
+            break;
+        }
+        offset += count;
     }
-    let rows = client.query(task_query, json!({ "$me": [user_id] }))?;
-    pulled.tasks = rows.into_iter().map(nest_project).filter_map(|r| task_from(&r)).collect();
 
     // The user's time logs since `since`, with their tasks.
     let mut select = json!({
@@ -310,9 +364,6 @@ fn pull(client: &Client, m: &Mapping, user_id: &str, since: &str) -> Result<Pull
         "task_id": [m.log_task, "fibery/id"],
         "task_name": [m.log_task, m.task_name],
     });
-    if let Some(state) = &m.task_state {
-        select["task_final"] = json!([m.log_task, state, "workflow/Final"]);
-    }
     if let (Some(field), Some(name)) = (&m.task_project, &m.project_name) {
         select["project_id"] = json!([m.log_task, field, "fibery/id"]);
         select["project_name"] = json!([m.log_task, field, name]);
@@ -353,10 +404,11 @@ fn pull(client: &Client, m: &Mapping, user_id: &str, since: &str) -> Result<Pull
 }
 
 fn log_from(row: &Value) -> Option<RemoteLog> {
+    // The project list owns the projects' archived state.
     let project = row["project_id"].as_str().map(|id| RemoteProject {
         id: id.to_string(),
         name: row["project_name"].as_str().unwrap_or_default().to_string(),
-        finished: false,
+        archived: false,
     });
     Some(RemoteLog {
         id: row["id"].as_str()?.to_string(),
@@ -364,7 +416,9 @@ fn log_from(row: &Value) -> Option<RemoteLog> {
             id: row["task_id"].as_str()?.to_string(),
             name: row["task_name"].as_str().unwrap_or_default().to_string(),
             project,
-            finished: row["task_final"].as_bool().unwrap_or(false),
+            // The pulled task list decides what the picker shows; a task
+            // that only comes with a log isn't in it.
+            hidden: true,
         },
         date: row["date"].as_str()?.to_string(),
         hours: number(&row["hours"]),
@@ -407,7 +461,7 @@ mod tests {
     fn parses_pulled_logs() {
         let row = json!({
             "id": "log-1", "modified": "2026-11-19T13:33:24.756Z", "date": "2026-11-19",
-            "hours": "0.02", "task_id": "task-1", "task_name": "Briefing", "task_final": false,
+            "hours": "0.02", "task_id": "task-1", "task_name": "Briefing",
             "project_id": "p-1", "project_name": "Website relaunch", "note": null,
             "start": "2026-11-19T13:32:14.570Z", "end": "2026-11-19T13:33:23.217Z"
         });
@@ -421,7 +475,53 @@ mod tests {
     #[test]
     fn nests_project_columns() {
         let row = nest_project(json!({"id": "t", "name": "T", "project_id": "p", "project_name": "P", "project_final": true}));
-        let task = task_from(&row).unwrap();
-        assert_eq!(task.project, Some(RemoteProject { id: "p".into(), name: "P".into(), finished: true }));
+        let task = task_from(&row, &Mapping::default(), 0).unwrap();
+        assert_eq!(task.project, Some(RemoteProject { id: "p".into(), name: "P".into(), archived: true }));
+    }
+
+    #[test]
+    fn hides_tasks_and_projects_by_state() {
+        let mut m = Mapping { task_states: Some(vec!["Open".into(), "Doing".into()]), ..Mapping::default() };
+        let now = 10 * 24 * 60 * 60;
+        let row = |state: &str, fin: bool, modified: i64| {
+            json!({"id": "t", "name": "T", "state": state, "final": fin, "modified": to_iso(modified)})
+        };
+        assert!(!task_from(&row("Open", false, 0), &m, now).unwrap().hidden);
+        assert!(task_from(&row("Waiting", false, 0), &m, now).unwrap().hidden);
+        assert!(task_from(&row("Done", true, now - 3600), &m, now).unwrap().hidden);
+        m.keep_done_days = 7;
+        assert!(!task_from(&row("Done", true, now - 3600), &m, now).unwrap().hidden);
+        assert!(task_from(&row("Done", true, 0), &m, now).unwrap().hidden);
+
+        // By default, finished projects are archived.
+        let project = json!({"id": "p", "name": "P", "state": "Billing", "final": true});
+        assert!(project_from(&project, &m).unwrap().archived);
+        m.hidden_project_states = Some(vec!["Paused".into()]);
+        assert!(!project_from(&project, &m).unwrap().archived);
+    }
+
+    #[test]
+    fn filters_tasks_for_the_picker() {
+        let m = Mapping { task_assignees: Some("assignments/assignees".into()), ..Mapping::default() };
+        let (filter, params) = task_filter(&m, "me", 0);
+        assert_eq!(filter, Some(json!(["q/in", ["assignments/assignees", "fibery/id"], "$me"])));
+        assert_eq!(params["$me"], json!(["me"]));
+
+        let m = Mapping {
+            show_everyone: true,
+            task_state: Some("workflow/state".into()),
+            task_states: Some(vec!["Open".into()]),
+            keep_done_days: 1,
+            ..m
+        };
+        let (filter, params) = task_filter(&m, "me", 86_400);
+        assert_eq!(
+            filter,
+            Some(json!(["q/or",
+                ["q/in", ["workflow/state", "enum/name"], "$states"],
+                [">=", ["fibery/modification-date"], "$changedSince"]]))
+        );
+        assert_eq!(params["$states"], json!(["Open"]));
+        assert!(!params.contains_key("$me"));
     }
 }

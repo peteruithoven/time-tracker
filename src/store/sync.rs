@@ -97,6 +97,13 @@ impl Store {
         Ok(())
     }
 
+    /// Stores a changed mapping (JSON, see `fibery::Mapping`).
+    pub fn set_account_mapping(&self, id: i64, mapping: &str) -> Result<()> {
+        self.conn
+            .execute("UPDATE accounts SET mapping = ?1 WHERE id = ?2", params![mapping, id])?;
+        Ok(())
+    }
+
     pub fn set_account_token(&self, id: i64, token: Option<&str>) -> Result<()> {
         self.conn
             .execute("UPDATE accounts SET token = ?1 WHERE id = ?2", params![token, id])?;
@@ -257,7 +264,22 @@ impl Store {
             sync.ensure_project(project, true)?;
         }
         for task in &pulled.tasks {
-            sync.ensure_task(task)?;
+            sync.ensure_task(task, true)?;
+        }
+        // Tasks the picker no longer offers (finished, reassigned, …).
+        let offered: HashSet<&str> = pulled.tasks.iter().map(|t| t.id.as_str()).collect();
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, remote_id FROM tasks WHERE client_id = ?1 AND remote_id IS NOT NULL AND done = 0")?;
+        let stale: Vec<i64> = stmt
+            .query_map([account.client_id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+            .filter_map(|r| r.ok())
+            .filter(|(_, remote)| !offered.contains(remote.as_str()))
+            .map(|(id, _)| id)
+            .collect();
+        drop(stmt);
+        for id in stale {
+            self.conn.execute("UPDATE tasks SET done = 1 WHERE id = ?1", [id])?;
         }
         let mut seen = HashSet::new();
         for log in &pulled.logs {
@@ -299,7 +321,7 @@ struct Sync<'a> {
 
 impl Sync<'_> {
     /// Local id for a remote project, creating or updating it.
-    /// `update_state`: whether `finished` is known (it isn't for projects
+    /// `update_state`: whether `archived` is known (it isn't for projects
     /// that only came along with a time log).
     fn ensure_project(&self, project: &RemoteProject, update_state: bool) -> Result<i64> {
         let conn = &self.store.conn;
@@ -316,7 +338,7 @@ impl Sync<'_> {
                 if update_state {
                     conn.execute(
                         "UPDATE projects SET archived = ?1 WHERE id = ?2",
-                        params![project.finished, id],
+                        params![project.archived, id],
                     )?;
                 }
                 Ok(id)
@@ -331,14 +353,17 @@ impl Sync<'_> {
                 conn.execute(
                     "INSERT INTO projects (client_id, name, color, remote_id, archived, created_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![self.client_id, project.name, color, project.id, update_state && project.finished, self.now],
+                    params![self.client_id, project.name, color, project.id, update_state && project.archived, self.now],
                 )?;
                 Ok(conn.last_insert_rowid())
             }
         }
     }
 
-    fn ensure_task(&self, task: &RemoteTask) -> Result<i64> {
+    /// Local id for a remote task, creating or updating it. `update_state`:
+    /// whether `hidden` is known (it isn't for tasks that only came along
+    /// with a time log).
+    fn ensure_task(&self, task: &RemoteTask, update_state: bool) -> Result<i64> {
         let conn = &self.store.conn;
         // The project list (pulled first) owns the projects' archived state.
         let project_id = match &task.project {
@@ -355,16 +380,19 @@ impl Sync<'_> {
         match existing {
             Some(id) => {
                 conn.execute(
-                    "UPDATE tasks SET name = ?1, project_id = ?2, done = ?3 WHERE id = ?4",
-                    params![task.name, project_id, task.finished, id],
+                    "UPDATE tasks SET name = ?1, project_id = ?2 WHERE id = ?3",
+                    params![task.name, project_id, id],
                 )?;
+                if update_state {
+                    conn.execute("UPDATE tasks SET done = ?1 WHERE id = ?2", params![task.hidden, id])?;
+                }
                 Ok(id)
             }
             None => {
                 conn.execute(
                     "INSERT INTO tasks (client_id, project_id, name, done, remote_id, created_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![self.client_id, project_id, task.name, task.finished, task.id, self.now],
+                    params![self.client_id, project_id, task.name, task.hidden, task.id, self.now],
                 )?;
                 Ok(conn.last_insert_rowid())
             }
@@ -373,7 +401,7 @@ impl Sync<'_> {
 
     fn merge_log(&self, log: &RemoteLog) -> Result<()> {
         let conn = &self.store.conn;
-        let task_id = self.ensure_task(&log.task)?;
+        let task_id = self.ensure_task(&log.task, false)?;
         let running_remotely = log.start.is_some() && log.end.is_none() && log.hours == 0.0;
         let (start, end, duration) = match (log.start, log.end) {
             (Some(start), Some(end)) => (Some(start), Some(end), None),
@@ -464,15 +492,16 @@ mod tests {
         RemoteTask {
             id: id.into(),
             name: format!("Task {id}"),
-            project: Some(RemoteProject { id: "p1".into(), name: "Website relaunch".into(), finished: false }),
-            finished: false,
+            project: Some(RemoteProject { id: "p1".into(), name: "Website relaunch".into(), archived: false }),
+            hidden: false,
         }
     }
 
     fn log(id: &str, task: &str, date: &str, modified: &str) -> RemoteLog {
         RemoteLog {
             id: id.into(),
-            task: remote_task(task),
+            // As pulled: a log's task is only offered if it's in the task list.
+            task: RemoteTask { hidden: true, ..remote_task(task) },
             date: date.into(),
             hours: 1.5,
             start: None,
@@ -484,7 +513,7 @@ mod tests {
 
     fn pulled(logs: Vec<RemoteLog>) -> Pulled {
         Pulled {
-            projects: vec![RemoteProject { id: "p1".into(), name: "Website relaunch".into(), finished: false }],
+            projects: vec![RemoteProject { id: "p1".into(), name: "Website relaunch".into(), archived: false }],
             tasks: vec![remote_task("t1")],
             logs,
             since: "2026-11-01".into(),
@@ -508,7 +537,7 @@ mod tests {
             .unwrap();
 
         let tasks = store.open_tasks().unwrap();
-        assert_eq!(tasks.len(), 2, "assigned task plus the task of a log");
+        assert_eq!(tasks.len(), 1, "only the pulled task list is offered, not the task of a log");
         assert!(tasks.iter().all(|t| t.is_remote && t.project_name.as_deref() == Some("Website relaunch")));
         let entries = store.entries_between("2026-11-01", "2026-11-30").unwrap();
         assert_eq!(entries.len(), 2);
@@ -518,7 +547,13 @@ mod tests {
         // Pulling again doesn't duplicate; a log deleted remotely disappears.
         store.apply_pull(&account, &pulled(vec![log("l1", "t1", "2026-11-17", "m1")]), 300).unwrap();
         assert_eq!(store.entries_between("2026-11-01", "2026-11-30").unwrap().len(), 1);
-        assert_eq!(store.open_tasks().unwrap().len(), 2);
+        assert_eq!(store.open_tasks().unwrap().len(), 1);
+
+        // A task that's no longer in the list (finished, reassigned) is hidden.
+        let empty = Pulled { tasks: Vec::new(), ..pulled(vec![log("l1", "t1", "2026-11-17", "m1")]) };
+        store.apply_pull(&account, &empty, 400).unwrap();
+        assert!(store.open_tasks().unwrap().is_empty());
+        assert_eq!(store.entries_between("2026-11-01", "2026-11-30").unwrap().len(), 1, "its time stays");
     }
 
     #[test]

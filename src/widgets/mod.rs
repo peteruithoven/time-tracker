@@ -2,6 +2,7 @@ pub mod away_alert;
 mod clients_dialog;
 mod connect_dialog;
 mod entry_dialog;
+pub mod fibery_settings;
 mod month_picker;
 mod new_project_dialog;
 pub mod preferences_dialog;

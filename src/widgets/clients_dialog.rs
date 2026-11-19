@@ -463,17 +463,45 @@ impl ClientsDialog {
                 new_rows.push(mirror.upcast());
 
                 if let Ok(mapping) = serde_json::from_str::<crate::fibery::Mapping>(&account.mapping) {
-                    let setup = adw::ActionRow::builder()
-                        .title(gettext("Time Logs"))
-                        .subtitle(format!(
+                    let subpage_row = |title: &str, subtitle: String| {
+                        let row = adw::ActionRow::builder()
+                            .title(title)
+                            .subtitle(subtitle)
+                            .use_markup(false)
+                            .activatable(true)
+                            .build();
+                        row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+                        row
+                    };
+                    let logs = subpage_row(
+                        &gettext("Time Logs"),
+                        format!(
                             "{} · {}",
                             crate::fibery::schema::display_name(&mapping.log_type),
                             crate::fibery::schema::display_name(&mapping.task_type)
-                        ))
-                        .use_markup(false)
-                        .build();
-                    group.add(&setup);
-                    new_rows.push(setup.upcast());
+                        ),
+                    );
+                    let tasks = subpage_row(
+                        &gettext("Show Tasks"),
+                        crate::widgets::fibery_settings::show_tasks_summary(&mapping),
+                    );
+                    for (row, time_logs) in [(&logs, true), (&tasks, false)] {
+                        let account = account.clone();
+                        row.connect_activated(clone!(
+                            #[weak(rename_to = dialog)]
+                            self,
+                            move |_| {
+                                let dialog = dialog.upcast_ref::<adw::PreferencesDialog>();
+                                if time_logs {
+                                    crate::widgets::fibery_settings::show_time_logs(dialog, &account);
+                                } else {
+                                    crate::widgets::fibery_settings::show_tasks(dialog, &account);
+                                }
+                            }
+                        ));
+                        group.add(row);
+                        new_rows.push(row.clone().upcast());
+                    }
                 }
 
                 if account.token.is_some() {

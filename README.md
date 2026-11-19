@@ -22,14 +22,14 @@ Built with Rust, GTK 4 and libadwaita, packaged as a Flatpak.
 
 A client can be connected to a Fibery workspace: Clients & Projects → the client → Connect Fibery…. You need your workspace address and an API key, which you create in Fibery under Settings → API Keys.
 
-The app finds the task, project and time log databases and their fields by itself and shows what it found before you connect. The time log database needs at least a link to the task, a date and a number for the hours; optional fields are the user, a note, start and end times, and a "Timing" checkbox on the task.
+The app finds the task, project and time log databases and their fields by itself and shows what it found before you connect. The time log database needs at least a link to the task, a date and a number for the hours; optional fields are the user, a note, start and end times, and a "Timing" checkbox on the task. To change what it found, open **Time Logs** on the client page. **Show Tasks** sets which tasks the task picker offers: yours or everyone's, which states, and how long finished tasks stay.
 
 **What syncs**
 
 | From Fibery to the app | From the app to Fibery |
 | --- | --- |
-| All projects (finished ones are archived) | Tasks you create under the connected client, assigned to you |
-| Tasks assigned to you (finished ones are marked done) | New, edited and deleted time entries |
+| All projects (those in hidden states, by default the finished ones, are archived) | Tasks you create under the connected client, assigned to you |
+| The tasks for the picker (by default: assigned to you, not finished) | New, edited and deleted time entries |
 | Your own time logs: a year on the first sync, the last two months after that | With **Mirror Running Timer** on: the time log is created when the timer starts and finished when it stops, ticking the task's "Timing" checkbox meanwhile, like Fibery's own timer buttons |
 | Time logs deleted in Fibery are removed | |
 

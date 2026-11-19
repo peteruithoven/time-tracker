@@ -11,6 +11,7 @@ src/widgets/clients_dialog.rs
 src/widgets/connect_dialog.rs
 src/widgets/entry_dialog.blp
 src/widgets/entry_dialog.rs
+src/widgets/fibery_settings.rs
 src/widgets/month_picker.rs
 src/widgets/new_project_dialog.blp
 src/widgets/new_project_dialog.rs
