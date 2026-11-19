@@ -44,11 +44,17 @@ mod imp {
         fn startup(&self) {
             self.parent_startup();
             gtk::Window::set_default_icon_name(APP_ID);
+            crate::screenshot::configure();
 
             let data_dir = glib::user_data_dir().join("time-tracker");
             std::fs::create_dir_all(&data_dir).expect("Could not create the data directory");
             let store = Store::open(&data_dir.join("time-tracker.db"), &gettext("Personal"))
                 .expect("Could not open the database");
+            if crate::screenshot::demo()
+                && let Err(err) = crate::demo::seed(&store)
+            {
+                glib::g_warning!("time-tracker", "Could not add demo data: {err}");
+            }
             self.store.set(Rc::new(store)).expect("Store initialized twice");
 
             let app = self.obj();
@@ -63,6 +69,7 @@ mod imp {
                 .active_window()
                 .unwrap_or_else(|| TimeTrackerWindow::new(&*app).upcast());
             window.present();
+            crate::screenshot::take(&window, app.upcast_ref());
         }
     }
 

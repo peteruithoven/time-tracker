@@ -19,6 +19,20 @@
   <url type="bugtracker">https://github.com/peteruithoven/time-tracker/issues</url>
   <url type="vcs-browser">https://github.com/peteruithoven/time-tracker</url>
   <launchable type="desktop-id">@app-id@.desktop</launchable>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Track time on tasks of your clients and projects</caption>
+      <image>https://raw.githubusercontent.com/peteruithoven/time-tracker/main/data/screenshots/track.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Review the month per client, project and task</caption>
+      <image>https://raw.githubusercontent.com/peteruithoven/time-tracker/main/data/screenshots/review.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Dark style</caption>
+      <image>https://raw.githubusercontent.com/peteruithoven/time-tracker/main/data/screenshots/track-dark.png</image>
+    </screenshot>
+  </screenshots>
   <translation type="gettext">@gettext-package@</translation>
   <content_rating type="oars-1.1"/>
   <requires>

@@ -1,10 +1,12 @@
 mod application;
 mod config;
+mod demo;
 mod fibery;
 mod format;
 mod fuzzy;
 mod invoicing;
 mod report;
+mod screenshot;
 mod secrets;
 mod store;
 mod sync;

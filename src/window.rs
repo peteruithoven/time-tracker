@@ -68,7 +68,7 @@ mod imp {
             let obj = self.obj();
 
             // Striped headerbar for development builds.
-            if PROFILE == "Devel" {
+            if PROFILE == "Devel" && !crate::screenshot::enabled() {
                 obj.add_css_class("devel");
             }
 
@@ -150,6 +150,9 @@ mod imp {
 
     impl WindowImpl for TimeTrackerWindow {
         fn close_request(&self) -> glib::Propagation {
+            if crate::screenshot::enabled() {
+                return self.parent_close_request();
+            }
             if let Err(err) = self.obj().save_window_size() {
                 glib::g_warning!("time-tracker", "Failed to save window state: {err}");
             }
@@ -218,6 +221,13 @@ impl TimeTrackerWindow {
     }
 
     fn load_window_size(&self) {
+        if let Some((width, height)) = crate::screenshot::size() {
+            self.set_default_size(width, height);
+            if let Some(view) = crate::screenshot::view() {
+                self.imp().view_stack.set_visible_child_name(&view);
+            }
+            return;
+        }
         let settings = &self.imp().settings;
         self.set_default_size(settings.int("window-width"), settings.int("window-height"));
         if settings.boolean("is-maximized") {

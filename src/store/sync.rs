@@ -79,6 +79,18 @@ impl Store {
         tx.commit()
     }
 
+    /// Demo data only: makes a client's projects and tasks look synced.
+    pub fn demo_mark_remote(&self, client_id: i64) -> Result<()> {
+        self.conn.execute("UPDATE clients SET source = 'fibery' WHERE id = ?1", [client_id])?;
+        self.conn.execute(
+            "UPDATE projects SET remote_id = 'demo-' || id WHERE client_id = ?1",
+            [client_id],
+        )?;
+        self.conn
+            .execute("UPDATE tasks SET remote_id = 'demo-' || id WHERE client_id = ?1", [client_id])?;
+        Ok(())
+    }
+
     pub fn set_account_mirror(&self, id: i64, mirror: bool) -> Result<()> {
         self.conn
             .execute("UPDATE accounts SET mirror_timer = ?1 WHERE id = ?2", params![mirror, id])?;
