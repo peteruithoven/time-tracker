@@ -1,6 +1,7 @@
 //! Dialog to add time after the fact, or edit/delete an existing entry.
 
 use std::cell::{Cell, RefCell};
+use std::sync::OnceLock;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -78,7 +79,17 @@ mod imp {
         }
     }
 
-    impl ObjectImpl for EntryDialog {}
+    impl ObjectImpl for EntryDialog {
+        fn signals() -> &'static [glib::subclass::Signal] {
+            static SIGNALS: OnceLock<Vec<glib::subclass::Signal>> = OnceLock::new();
+            SIGNALS.get_or_init(|| {
+                // Start and end of the saved entry (0 when it's a duration).
+                vec![glib::subclass::Signal::builder("saved")
+                    .param_types([i64::static_type(), i64::static_type()])
+                    .build()]
+            })
+        }
+    }
     impl WidgetImpl for EntryDialog {}
     impl AdwDialogImpl for EntryDialog {}
 }
@@ -101,6 +112,34 @@ impl EntryDialog {
         dialog.imp().mode_toggle.set_active_name(Some("range"));
         dialog.update();
         dialog
+    }
+
+    /// Dialog to put the time from `start` to `end` (an away period) on a
+    /// task of your choice.
+    pub fn new_assign(start: i64, end: i64) -> Self {
+        let dialog: Self = glib::Object::new();
+        dialog.set_title(&gettext("Assign Time"));
+        let imp = dialog.imp();
+        imp.save_button.set_label(&gettext("Assign"));
+        dialog.setup();
+        dialog.set_task(None);
+        dialog.set_date(&format::local_date(start));
+        imp.mode_toggle.set_active_name(Some("range"));
+        imp.start_row.set_text(&format::clock_time(start));
+        imp.end_row.set_text(&format::clock_time(end));
+        dialog.update();
+        dialog
+    }
+
+    /// Called after the entry was saved, with its start and end when it
+    /// has them.
+    pub fn connect_saved<F: Fn(Option<(i64, i64)>) + 'static>(&self, f: F) -> glib::SignalHandlerId {
+        self.connect_local("saved", false, move |args| {
+            let start = args[1].get::<i64>().unwrap_or_default();
+            let end = args[2].get::<i64>().unwrap_or_default();
+            f((start != 0 && end != 0).then_some((start, end)));
+            None
+        })
     }
 
     /// Dialog to edit an existing entry.
@@ -298,6 +337,8 @@ impl EntryDialog {
         };
         match result {
             Ok(()) => {
+                let (start, end) = (input.start_at.unwrap_or_default(), input.end_at.unwrap_or_default());
+                self.emit_by_name::<()>("saved", &[&start, &end]);
                 app.data_changed();
                 self.close();
             }

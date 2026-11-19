@@ -17,6 +17,7 @@ mod imp {
     #[derive(Debug, Default)]
     pub struct TimeTrackerApplication {
         pub store: OnceCell<Rc<Store>>,
+        pub idle: OnceCell<Rc<crate::idle::Monitor>>,
         /// A `data-changed` emission is scheduled.
         pub change_pending: std::cell::Cell<bool>,
     }
@@ -61,6 +62,15 @@ mod imp {
             app.setup_actions();
             app.setup_accels();
             crate::sync::start();
+            if !crate::screenshot::enabled() {
+                let monitor = crate::idle::Monitor::start(|away| {
+                    let app = super::TimeTrackerApplication::get();
+                    if let Some(window) = app.active_window().or_else(|| app.windows().into_iter().next()) {
+                        crate::widgets::away_alert::present(&window, away);
+                    }
+                });
+                let _ = self.idle.set(monitor);
+            }
         }
 
         fn activate(&self) {
@@ -152,7 +162,12 @@ impl TimeTrackerApplication {
         let shortcuts = gio::ActionEntry::builder("shortcuts")
             .activate(|app: &Self, _, _| app.show_shortcuts())
             .build();
-        self.add_action_entries([quit, about, clients, shortcuts]);
+        let preferences = gio::ActionEntry::builder("preferences")
+            .activate(|app: &Self, _, _| {
+                crate::widgets::preferences_dialog::new().present(app.active_window().as_ref());
+            })
+            .build();
+        self.add_action_entries([quit, about, clients, shortcuts, preferences]);
     }
 
     fn setup_accels(&self) {

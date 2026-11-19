@@ -4,6 +4,7 @@ mod demo;
 mod fibery;
 mod format;
 mod fuzzy;
+mod idle;
 mod invoicing;
 mod report;
 mod screenshot;

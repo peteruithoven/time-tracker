@@ -1,8 +1,10 @@
+pub mod away_alert;
 mod clients_dialog;
 mod connect_dialog;
 mod entry_dialog;
 mod month_picker;
 mod new_project_dialog;
+pub mod preferences_dialog;
 mod project_picker;
 mod review_page;
 mod task_picker;

@@ -21,5 +21,15 @@
       <default>'track'</default>
       <summary>Last visible view</summary>
     </key>
+    <key name="idle-detection" type="b">
+      <default>true</default>
+      <summary>Ask about away time</summary>
+      <description>When you come back after being away while the timer runs, ask what to do with that time.</description>
+    </key>
+    <key name="idle-minutes" type="i">
+      <range min="1" max="240"/>
+      <default>10</default>
+      <summary>Minutes without input before you count as away</summary>
+    </key>
   </schema>
 </schemalist>

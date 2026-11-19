@@ -383,6 +383,32 @@ impl Store {
         Ok(stop_running(&self.conn, now)? > 0)
     }
 
+    /// Leaves an away period out of the running entry: it ends at `away_at`
+    /// and the same task continues in a new entry from `back_at` (on
+    /// `back_date`), with the same note. If the entry started while away,
+    /// its start moves to `back_at` instead. Returns whether one was running.
+    pub fn resume_after_away(&self, away_at: i64, back_at: i64, back_date: &str, now: i64) -> Result<bool> {
+        let Some(running) = self.running_entry()? else {
+            return Ok(false);
+        };
+        let tx = self.conn.unchecked_transaction()?;
+        if running.start_at.is_some_and(|start| start >= away_at) {
+            tx.execute(
+                "UPDATE entries SET start_at = ?1, date = ?2, updated_at = ?3, dirty = 1 WHERE id = ?4",
+                params![back_at, back_date, now, running.id],
+            )?;
+        } else {
+            stop_running(&tx, away_at)?;
+            tx.execute(
+                "INSERT INTO entries (task_id, date, start_at, note, created_at, updated_at, dirty)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?5, 1)",
+                params![running.task_id, back_date, back_at, running.note, now],
+            )?;
+        }
+        tx.commit()?;
+        Ok(true)
+    }
+
     pub fn set_entry_note(&self, entry_id: i64, note: &str, now: i64) -> Result<()> {
         self.conn.execute(
             "UPDATE entries SET note = ?1, updated_at = ?2, dirty = 1 WHERE id = ?3",
@@ -569,6 +595,42 @@ mod tests {
         assert_eq!(clients.len(), 1);
         assert_eq!(clients[0].name, "Personal");
         assert!(!clients[0].billable);
+    }
+
+    #[test]
+    fn resuming_after_away_leaves_the_away_time_out() {
+        let (store, _, task) = store_with_task();
+        let entry = store.start_timer(task, 1_000, "2026-11-19").unwrap();
+        store.set_entry_note(entry, "Sketches", 1_000).unwrap();
+
+        assert!(store.resume_after_away(1_600, 4_000, "2026-11-19", 4_000).unwrap());
+
+        let first = store.entry(entry).unwrap().unwrap();
+        assert_eq!((first.start_at, first.end_at), (Some(1_000), Some(1_600)));
+        let running = store.running_entry().unwrap().unwrap();
+        assert_eq!(running.task_id, task);
+        assert_eq!(running.start_at, Some(4_000));
+        assert_eq!(running.note, "Sketches");
+    }
+
+    #[test]
+    fn resuming_after_away_moves_an_entry_started_while_away() {
+        let (store, _, task) = store_with_task();
+        let entry = store.start_timer(task, 2_000, "2026-11-19").unwrap();
+
+        store.resume_after_away(1_600, 4_000, "2026-11-20", 4_000).unwrap();
+
+        let running = store.running_entry().unwrap().unwrap();
+        assert_eq!(running.id, entry);
+        assert_eq!(running.start_at, Some(4_000));
+        assert_eq!(running.date, "2026-11-20");
+    }
+
+    #[test]
+    fn resuming_after_away_without_a_timer_does_nothing() {
+        let (store, _, _) = store_with_task();
+        assert!(!store.resume_after_away(1_600, 4_000, "2026-11-19", 4_000).unwrap());
+        assert!(store.running_entry().unwrap().is_none());
     }
 
     #[test]

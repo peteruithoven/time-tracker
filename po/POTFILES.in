@@ -6,6 +6,7 @@ src/invoicing/avec_sans_moneybird.rs
 src/keyboard_shortcuts.blp
 src/main.rs
 src/sync.rs
+src/widgets/away_alert.rs
 src/widgets/clients_dialog.rs
 src/widgets/connect_dialog.rs
 src/widgets/entry_dialog.blp
@@ -13,6 +14,7 @@ src/widgets/entry_dialog.rs
 src/widgets/month_picker.rs
 src/widgets/new_project_dialog.blp
 src/widgets/new_project_dialog.rs
+src/widgets/preferences_dialog.rs
 src/widgets/project_picker.rs
 src/widgets/review_page.blp
 src/widgets/review_page.rs

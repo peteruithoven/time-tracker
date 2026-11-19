@@ -11,6 +11,7 @@
     "--socket=fallback-x11",
     "--socket=wayland",
     "--device=dri",
+    "--talk-name=org.gnome.Mutter.IdleMonitor",
     "--env=RUST_BACKTRACE=1",
     "--env=G_MESSAGES_DEBUG=none"
   ],
