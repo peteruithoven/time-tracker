@@ -1,9 +1,12 @@
 mod application;
 mod config;
+mod fibery;
 mod format;
 mod fuzzy;
 mod report;
+mod secrets;
 mod store;
+mod sync;
 mod widgets;
 mod window;
 

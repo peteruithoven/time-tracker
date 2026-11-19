@@ -3,13 +3,17 @@ name = "time-tracker"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-rust-version = "1.92"
+rust-version = "1.95"
 
 [dependencies]
 adw = { package = "libadwaita", version = "0.9", features = ["v1_8"] }
 gettext-rs = { version = "0.7", features = ["gettext-system"] }
 gtk = { package = "gtk4", version = "0.11", features = ["v4_20"] }
+libsecret = { version = "0.9", features = ["v0_21"] }
 rusqlite = { version = "0.43", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3", features = ["json"] }
 
 [profile.release]
 lto = "thin"

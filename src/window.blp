@@ -28,6 +28,49 @@ template $TimeTrackerWindow: Adw.ApplicationWindow {
         tooltip-text: _("Main Menu");
         menu-model: primary_menu;
       }
+
+      [end]
+      MenuButton sync_button {
+        visible: false;
+        icon-name: "emblem-synchronizing-symbolic";
+        tooltip-text: _("Sync Status");
+
+        popover: Popover {
+          child: Box {
+            orientation: vertical;
+            spacing: 6;
+            width-request: 240;
+            margin-top: 6;
+            margin-bottom: 6;
+            margin-start: 6;
+            margin-end: 6;
+
+            Label sync_title {
+              xalign: 0;
+
+              styles [
+                "heading",
+              ]
+            }
+
+            Label sync_detail {
+              xalign: 0;
+              wrap: true;
+              max-width-chars: 36;
+
+              styles [
+                "dim-label",
+              ]
+            }
+
+            Button sync_now_button {
+              label: _("Sync Now");
+              halign: end;
+              margin-top: 6;
+            }
+          };
+        };
+      }
     }
 
     content: Adw.ViewStack view_stack {

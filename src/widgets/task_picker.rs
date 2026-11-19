@@ -375,7 +375,7 @@ impl TaskPicker {
                     fuzzy::score(&query, &haystack).map(|s| (s + name_bonus + recent_bonus, task))
                 })
                 .collect();
-            scored.sort_by(|a, b| b.0.cmp(&a.0));
+            scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
             items = scored.into_iter().map(|(_, t)| (t, matches.clone())).collect();
         }
 

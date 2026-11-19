@@ -13,8 +13,60 @@ use crate::application::TimeTrackerApplication;
 use crate::format;
 use crate::store::{Client, Project};
 use crate::widgets::{
-    NewProjectDialog, PROJECT_COLORS, color_label, project_color_dot, set_source_badge,
+    ConnectDialog, NewProjectDialog, PROJECT_COLORS, color_label, project_color_dot, set_source_badge,
 };
+
+/// Rows of a preferences group, rebuilt only when what they show changes.
+///
+/// Rebuilding while the user tabs through the page would destroy the row
+/// GTK is moving keyboard focus to (and spew criticals), so unchanged
+/// sections are left alone.
+struct Section<R> {
+    rows: RefCell<Vec<R>>,
+    key: RefCell<Option<String>>,
+}
+
+impl<R> Default for Section<R> {
+    fn default() -> Self {
+        Self { rows: RefCell::default(), key: RefCell::default() }
+    }
+}
+
+impl<R: IsA<gtk::Widget>> Section<R> {
+    /// Clears the rows for a rebuild; `false` if `key` didn't change.
+    fn begin(&self, group: &adw::PreferencesGroup, key: String) -> bool {
+        if self.key.borrow().as_deref() == Some(key.as_str()) {
+            return false;
+        }
+        self.key.replace(Some(key));
+        for row in self.rows.take() {
+            group.remove(&row);
+        }
+        true
+    }
+
+    fn set_rows(&self, rows: Vec<R>) {
+        self.rows.replace(rows);
+    }
+}
+
+/// Wraps `f` so it runs once after the current event, however often it's
+/// called meanwhile.
+fn deferred(f: impl Fn() + 'static) -> impl Fn() + 'static {
+    let f = Rc::new(f);
+    let scheduled = Rc::new(std::cell::Cell::new(false));
+    move || {
+        if scheduled.replace(true) {
+            return;
+        }
+        let f = f.clone();
+        let scheduled = scheduled.clone();
+        glib::idle_add_local_once(move || {
+            scheduled.set(false);
+            f();
+        });
+    }
+}
 
 mod imp {
     use super::*;
@@ -24,6 +76,7 @@ mod imp {
         pub clients_group: adw::PreferencesGroup,
         pub archived_group: adw::PreferencesGroup,
         pub rows: RefCell<Vec<adw::ActionRow>>,
+        pub rows_key: RefCell<Option<String>>,
         /// `data-changed` handlers to disconnect when the dialog closes.
         pub handlers: RefCell<Vec<glib::SignalHandlerId>>,
     }
@@ -105,21 +158,27 @@ impl ClientsDialog {
 
     /// Calls `f` whenever stored data changes, until the dialog closes.
     fn on_data_changed(&self, f: impl Fn() + 'static) {
+        let f = deferred(f);
         let handler = TimeTrackerApplication::get().connect_data_changed(move |_| f());
         self.imp().handlers.borrow_mut().push(handler);
     }
 
     fn refresh(&self) {
         let imp = self.imp();
+        let store = TimeTrackerApplication::get().store();
+        let clients = store.all_clients().unwrap_or_default();
+        let projects = store.projects().unwrap_or_default();
+        let key = format!("{clients:?}{:?}", projects.iter().map(|p| p.client_id).collect::<Vec<_>>());
+        if imp.rows_key.borrow().as_deref() == Some(key.as_str()) {
+            return;
+        }
+        imp.rows_key.replace(Some(key));
         for row in imp.rows.take() {
             if let Some(group) = row.ancestor(adw::PreferencesGroup::static_type()) {
                 group.downcast::<adw::PreferencesGroup>().expect("is a group").remove(&row);
             }
         }
 
-        let store = TimeTrackerApplication::get().store();
-        let clients = store.all_clients().unwrap_or_default();
-        let projects = store.projects().unwrap_or_default();
         let mut rows = Vec::new();
         for client in &clients {
             let count = projects.iter().filter(|p| p.client_id == client.id).count() as u32;
@@ -221,6 +280,43 @@ impl ClientsDialog {
         details.add(&rate);
         page.add(&details);
 
+        // Connection
+        let connection = adw::PreferencesGroup::builder().title(gettext("Connection")).build();
+        page.add(&connection);
+        // Disconnect gets its own group, like other destructive actions.
+        let disconnect_group = adw::PreferencesGroup::new();
+        let disconnect = adw::ButtonRow::builder().title(gettext("Disconnect")).build();
+        disconnect.add_css_class("destructive-action");
+        disconnect.connect_activated(clone!(
+            #[weak(rename_to = dialog)]
+            self,
+            move |_| {
+                let store = TimeTrackerApplication::get().store();
+                if let Some(account) = store.account_for_client(client_id).ok().flatten() {
+                    dialog.confirm_disconnect(account);
+                }
+            }
+        ));
+        disconnect_group.add(&disconnect);
+        page.add(&disconnect_group);
+        let connection_rows: Rc<Section<gtk::Widget>> = Rc::default();
+        let refresh_connection = clone!(
+            #[weak(rename_to = dialog)]
+            self,
+            #[weak]
+            connection,
+            #[weak]
+            disconnect_group,
+            #[strong]
+            connection_rows,
+            move || dialog.fill_connection(&connection, &disconnect_group, &connection_rows, client_id)
+        );
+        refresh_connection();
+        let on_sync = deferred(refresh_connection.clone());
+        let handler = TimeTrackerApplication::get().connect_sync_changed(move |_| on_sync());
+        self.imp().handlers.borrow_mut().push(handler);
+        self.on_data_changed(refresh_connection);
+
         // Projects
         let projects_group = adw::PreferencesGroup::builder().title(gettext("Projects")).build();
         let add = header_button("list-add-symbolic", &gettext("Add Project"));
@@ -231,7 +327,7 @@ impl ClientsDialog {
         ));
         projects_group.set_header_suffix(Some(&add));
         page.add(&projects_group);
-        let project_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::default();
+        let project_rows: Rc<Section<adw::ActionRow>> = Rc::default();
         let refresh_projects = clone!(
             #[weak(rename_to = dialog)]
             self,
@@ -265,15 +361,168 @@ impl ClientsDialog {
         self.push_subpage(&navigation_page(&client.name, &page));
     }
 
-    fn fill_projects(&self, group: &adw::PreferencesGroup, rows: &RefCell<Vec<adw::ActionRow>>, client_id: i64) {
-        for row in rows.take() {
-            group.remove(&row);
-        }
+    fn fill_connection(
+        &self,
+        group: &adw::PreferencesGroup,
+        disconnect_group: &adw::PreferencesGroup,
+        section: &Section<gtk::Widget>,
+        client_id: i64,
+    ) {
         let store = TimeTrackerApplication::get().store();
+        let account = store.account_for_client(client_id).ok().flatten();
+        disconnect_group.set_visible(account.is_some());
+        let syncing = crate::sync::status() == crate::sync::Status::Syncing;
+        if !section.begin(group, format!("{account:?}{syncing}")) {
+            return;
+        }
+        let mut new_rows: Vec<gtk::Widget> = Vec::new();
+        match account {
+            None => {
+                let row = adw::ActionRow::builder()
+                    .title(gettext("Not Connected"))
+                    .subtitle(gettext("Tasks and time stay on this computer"))
+                    .build();
+                let connect = gtk::Button::builder()
+                    .label(gettext("Connect Fibery…"))
+                    .valign(gtk::Align::Center)
+                    .build();
+                connect.connect_clicked(clone!(
+                    #[weak(rename_to = dialog)]
+                    self,
+                    move |_| ConnectDialog::new(client_id).present(Some(&dialog))
+                ));
+                row.add_suffix(&connect);
+                group.add(&row);
+                new_rows.push(row.upcast());
+            }
+            Some(account) => {
+                let host = account.workspace.trim_start_matches("https://").to_string();
+                let row = adw::ActionRow::builder()
+                    .title("Fibery")
+                    .subtitle(gettext("{user} · {workspace}").replace("{user}", &account.user_name).replace("{workspace}", &host))
+                    .use_markup(false)
+                    .build();
+                let badge = gtk::Label::builder().valign(gtk::Align::Center).css_classes(["source-badge"]).build();
+                set_source_badge(&badge, true);
+                row.add_prefix(&badge);
+                group.add(&row);
+                new_rows.push(row.upcast());
+
+                let status = adw::ActionRow::builder().title(gettext("Sync")).use_markup(false).build();
+                let subtitle = if syncing {
+                    gettext("Syncing…")
+                } else if let Some(error) = &account.last_error {
+                    error.clone()
+                } else if let Some(at) = account.last_sync_at {
+                    gettext("Last synced {date} at {time}")
+                        .replace("{date}", &format::short_date(&format::local_date(at)))
+                        .replace("{time}", &format::clock_time(at))
+                } else {
+                    gettext("Not synced yet")
+                };
+                status.set_subtitle(&subtitle);
+                if account.last_error.is_some() && !syncing {
+                    status.add_css_class("error");
+                }
+                let sync_now = gtk::Button::builder()
+                    .label(gettext("Sync Now"))
+                    .valign(gtk::Align::Center)
+                    .sensitive(!syncing)
+                    .build();
+                sync_now.connect_clicked(|_| crate::sync::sync(true));
+                status.add_suffix(&sync_now);
+                group.add(&status);
+                new_rows.push(status.upcast());
+
+                let mirror = adw::SwitchRow::builder()
+                    .title(gettext("Mirror Running Timer"))
+                    .subtitle(gettext("Create the time log in Fibery when the timer starts, not when it stops"))
+                    .active(account.mirror_timer)
+                    .build();
+                let account_id = account.id;
+                mirror.connect_active_notify(move |row| {
+                    let app = TimeTrackerApplication::get();
+                    let _ = app.store().set_account_mirror(account_id, row.is_active());
+                    app.data_changed();
+                });
+                group.add(&mirror);
+                new_rows.push(mirror.upcast());
+
+                if let Ok(mapping) = serde_json::from_str::<crate::fibery::Mapping>(&account.mapping) {
+                    let setup = adw::ActionRow::builder()
+                        .title(gettext("Time Logs"))
+                        .subtitle(format!(
+                            "{} · {}",
+                            crate::fibery::schema::display_name(&mapping.log_type),
+                            crate::fibery::schema::display_name(&mapping.task_type)
+                        ))
+                        .use_markup(false)
+                        .build();
+                    group.add(&setup);
+                    new_rows.push(setup.upcast());
+                }
+
+                if account.token.is_some() {
+                    let key = adw::ActionRow::builder()
+                        .title(gettext("API Key"))
+                        .subtitle(gettext(
+                            "Stored in the app's own data because the system keyring couldn't be used. Each sync tries the keyring again.",
+                        ))
+                        .build();
+                    key.add_prefix(&gtk::Image::from_icon_name("dialog-warning-symbolic"));
+                    group.add(&key);
+                    new_rows.push(key.upcast());
+                }
+            }
+        }
+        section.set_rows(new_rows);
+    }
+
+    fn confirm_disconnect(&self, account: crate::store::Account) {
+        let alert = adw::AlertDialog::new(
+            Some(&gettext("Disconnect Fibery?")),
+            Some(&gettext("Synced projects, tasks and time stay in the app, but changes no longer sync. Nothing is removed from Fibery.")),
+        );
+        alert.add_responses(&[("cancel", &gettext("_Cancel")), ("disconnect", &gettext("_Disconnect"))]);
+        alert.set_response_appearance("disconnect", adw::ResponseAppearance::Destructive);
+        alert.set_default_response(Some("cancel"));
+        alert.set_close_response("cancel");
+        alert.connect_response(Some("disconnect"), move |_, _| {
+            let account = account.clone();
+            glib::spawn_future_local(async move {
+                let app = TimeTrackerApplication::get();
+                if let Err(err) = crate::secrets::delete_token(&account.workspace, &account.user_id).await {
+                    glib::g_warning!("time-tracker", "Could not remove the token from the keyring: {err}");
+                }
+                let _ = app.store().remove_account(account.id);
+                app.data_changed();
+                crate::sync::refresh_status();
+            });
+        });
+        alert.present(Some(self));
+    }
+
+    fn fill_projects(&self, group: &adw::PreferencesGroup, section: &Section<adw::ActionRow>, client_id: i64) {
+        let store = TimeTrackerApplication::get().store();
+        let open_count = |project_id| {
+            let tasks = store.project_tasks(client_id, project_id).unwrap_or_default();
+            (tasks.len(), tasks.iter().filter(|t| !t.done).count() as u32)
+        };
+        let projects: Vec<_> = store
+            .client_projects(client_id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| {
+                let (_, open) = open_count(Some(p.id));
+                (p, open)
+            })
+            .collect();
+        let loose = open_count(None);
+        if !section.begin(group, format!("{projects:?}{loose:?}")) {
+            return;
+        }
         let mut new_rows = Vec::new();
-        for project in store.client_projects(client_id).unwrap_or_default() {
-            let tasks = store.project_tasks(client_id, Some(project.id)).unwrap_or_default();
-            let open = tasks.iter().filter(|t| !t.done).count() as u32;
+        for (project, open) in projects {
             let mut subtitle = vec![ngettext("{} open task", "{} open tasks", open).replace("{}", &open.to_string())];
             if let Some(rate) = project.hourly_rate_cents {
                 subtitle.insert(0, gettext("{}/h").replace("{}", &format::euros(rate)));
@@ -303,9 +552,8 @@ impl ClientsDialog {
         }
 
         // Tasks directly on the client.
-        let loose = store.project_tasks(client_id, None).unwrap_or_default();
-        if !loose.is_empty() {
-            let open = loose.iter().filter(|t| !t.done).count() as u32;
+        let (loose_count, open) = loose;
+        if loose_count > 0 {
             let row = adw::ActionRow::builder()
                 .title(gettext("No Project"))
                 .subtitle(ngettext("{} open task", "{} open tasks", open).replace("{}", &open.to_string()))
@@ -322,7 +570,7 @@ impl ClientsDialog {
             new_rows.push(row);
         }
         group.set_description(new_rows.is_empty().then(|| gettext("No projects yet")).as_deref());
-        rows.replace(new_rows);
+        section.set_rows(new_rows);
     }
 
     /// A project's details and tasks; for `project_id` `None`, the client's
@@ -366,7 +614,7 @@ impl ClientsDialog {
             .description(gettext("Done tasks are hidden from the task picker."))
             .build();
         page.add(&tasks_group);
-        let task_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::default();
+        let task_rows: Rc<Section<adw::ActionRow>> = Rc::default();
         let refresh_tasks = clone!(
             #[weak]
             tasks_group,
@@ -402,14 +650,14 @@ impl ClientsDialog {
     }
 }
 
-fn fill_tasks(group: &adw::PreferencesGroup, rows: &RefCell<Vec<adw::ActionRow>>, client_id: i64, project_id: Option<i64>) {
-    for row in rows.take() {
-        group.remove(&row);
-    }
+fn fill_tasks(group: &adw::PreferencesGroup, section: &Section<adw::ActionRow>, client_id: i64, project_id: Option<i64>) {
     let tasks = TimeTrackerApplication::get()
         .store()
         .project_tasks(client_id, project_id)
         .unwrap_or_default();
+    if !section.begin(group, format!("{tasks:?}")) {
+        return;
+    }
     let mut new_rows = Vec::new();
     for task in tasks {
         let check = gtk::CheckButton::builder()
@@ -442,7 +690,7 @@ fn fill_tasks(group: &adw::PreferencesGroup, rows: &RefCell<Vec<adw::ActionRow>>
     } else {
         gettext("Done tasks are hidden from the task picker.")
     }));
-    rows.replace(new_rows);
+    section.set_rows(new_rows);
 }
 
 fn navigation_page(title: &str, content: &adw::PreferencesPage) -> adw::NavigationPage {

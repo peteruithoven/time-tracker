@@ -16,6 +16,14 @@ mod imp {
         pub view_stack: TemplateChild<adw::ViewStack>,
         #[template_child]
         pub review_page: TemplateChild<crate::widgets::ReviewPage>,
+        #[template_child]
+        pub sync_button: TemplateChild<gtk::MenuButton>,
+        #[template_child]
+        pub sync_title: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub sync_detail: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub sync_now_button: TemplateChild<gtk::Button>,
         pub settings: gio::Settings,
     }
 
@@ -25,6 +33,10 @@ mod imp {
                 view_toggle: TemplateChild::default(),
                 view_stack: TemplateChild::default(),
                 review_page: TemplateChild::default(),
+                sync_button: TemplateChild::default(),
+                sync_title: TemplateChild::default(),
+                sync_detail: TemplateChild::default(),
+                sync_now_button: TemplateChild::default(),
                 settings: gio::Settings::new(APP_ID),
             }
         }
@@ -77,6 +89,19 @@ mod imp {
                 .build();
             obj.add_action_entries([export]);
 
+            self.sync_now_button.connect_clicked(|button| {
+                if let Some(popover) = button.ancestor(gtk::Popover::static_type()) {
+                    popover.downcast::<gtk::Popover>().expect("is a popover").popdown();
+                }
+                crate::sync::sync(true);
+            });
+            crate::application::TimeTrackerApplication::get().connect_sync_changed(glib::clone!(
+                #[weak]
+                obj,
+                move |_| obj.update_sync_button()
+            ));
+            obj.update_sync_button();
+
             obj.load_window_size();
         }
     }
@@ -108,6 +133,39 @@ impl TimeTrackerWindow {
         glib::Object::builder()
             .property("application", application)
             .build()
+    }
+
+    /// Header bar sync icon: hidden without connections, otherwise shows
+    /// the state, with details in its popover.
+    fn update_sync_button(&self) {
+        use crate::sync::Status;
+        let imp = self.imp();
+        let status = crate::sync::status();
+        let button = &*imp.sync_button;
+        button.set_visible(status != Status::Off);
+        for class in ["error", "warning", "accent"] {
+            button.remove_css_class(class);
+        }
+        let icon = match &status {
+            Status::Off | Status::Synced(_) => "emblem-synchronizing-symbolic",
+            Status::Syncing => "content-loading-symbolic",
+            Status::Pending(_) => {
+                button.add_css_class("accent");
+                "emblem-synchronizing-symbolic"
+            }
+            Status::Offline(_) => "network-offline-symbolic",
+            Status::Error(_) => {
+                button.add_css_class("warning");
+                "dialog-warning-symbolic"
+            }
+        };
+        button.set_icon_name(icon);
+        let (title, detail) = crate::sync::describe(&status);
+        button.set_tooltip_text(Some(&title));
+        imp.sync_title.set_label(&title);
+        imp.sync_detail.set_label(&detail);
+        imp.sync_detail.set_visible(!detail.is_empty());
+        imp.sync_now_button.set_sensitive(status != Status::Syncing);
     }
 
     fn save_window_size(&self) -> Result<(), glib::BoolError> {

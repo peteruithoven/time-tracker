@@ -9,7 +9,11 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
-pub use models::{Client, Entry, Project, Task};
+pub use models::{Account, Client, Entry, Project, Task};
+
+mod sync;
+
+pub use sync::NewAccount;
 
 pub type Result<T> = rusqlite::Result<T>;
 
@@ -69,6 +73,36 @@ CREATE INDEX entries_date ON entries(date);
 -- At most one running timer.
 CREATE UNIQUE INDEX entries_one_running ON entries((end_at IS NULL))
     WHERE start_at IS NOT NULL AND end_at IS NULL;
+"#, r#"
+-- A client connected to a service such as Fibery.
+CREATE TABLE accounts (
+    id INTEGER PRIMARY KEY,
+    client_id INTEGER NOT NULL UNIQUE REFERENCES clients(id),
+    service TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    user_name TEXT NOT NULL,
+    -- Detected databases and fields (JSON).
+    mapping TEXT NOT NULL,
+    mirror_timer INTEGER NOT NULL DEFAULT 1,
+    -- Only used when no system keyring is available.
+    token TEXT,
+    last_sync_at INTEGER,
+    last_error TEXT,
+    created_at INTEGER NOT NULL
+);
+
+-- Changed locally since the last push.
+ALTER TABLE entries ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0;
+-- Deleted locally, still to be deleted remotely.
+ALTER TABLE entries ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE entries ADD COLUMN remote_modified TEXT;
+
+CREATE INDEX entries_remote ON entries(remote_id);
+CREATE INDEX tasks_remote ON tasks(remote_id);
+CREATE INDEX projects_remote ON projects(remote_id);
+
+CREATE VIEW live_entries AS SELECT * FROM entries WHERE deleted = 0;
 "#];
 
 const TASK_SELECT: &str = "
@@ -90,7 +124,7 @@ const ENTRY_SELECT: &str = "
     SELECT e.id, e.task_id, t.name, p.name, c.name, p.color, t.remote_id IS NOT NULL,
            e.date, e.start_at, e.end_at, e.duration_secs, e.note,
            t.client_id, c.source, t.project_id
-    FROM entries e
+    FROM live_entries e
     JOIN tasks t ON t.id = e.task_id
     JOIN clients c ON c.id = t.client_id
     LEFT JOIN projects p ON p.id = t.project_id";
@@ -316,8 +350,8 @@ impl Store {
         let tx = self.conn.unchecked_transaction()?;
         stop_running(&tx, now)?;
         tx.execute(
-            "INSERT INTO entries (task_id, date, start_at, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?3, ?3)",
+            "INSERT INTO entries (task_id, date, start_at, created_at, updated_at, dirty)
+             VALUES (?1, ?2, ?3, ?3, ?3, 1)",
             params![task_id, date, now],
         )?;
         let id = tx.last_insert_rowid();
@@ -336,7 +370,7 @@ impl Store {
 
     pub fn set_entry_note(&self, entry_id: i64, note: &str, now: i64) -> Result<()> {
         self.conn.execute(
-            "UPDATE entries SET note = ?1, updated_at = ?2 WHERE id = ?3",
+            "UPDATE entries SET note = ?1, updated_at = ?2, dirty = 1 WHERE id = ?3",
             params![note, now, entry_id],
         )?;
         Ok(())
@@ -372,8 +406,8 @@ impl Store {
     pub fn add_entry(&self, input: &EntryInput, now: i64) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO entries (task_id, date, start_at, end_at, duration_secs, note,
-                                  created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                                  created_at, updated_at, dirty)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, 1)",
             params![
                 input.task_id,
                 input.date,
@@ -390,7 +424,7 @@ impl Store {
     pub fn update_entry(&self, id: i64, input: &EntryInput, now: i64) -> Result<()> {
         self.conn.execute(
             "UPDATE entries SET task_id = ?1, date = ?2, start_at = ?3, end_at = ?4,
-                                duration_secs = ?5, note = ?6, updated_at = ?7
+                                duration_secs = ?5, note = ?6, updated_at = ?7, dirty = 1
              WHERE id = ?8",
             params![
                 input.task_id,
@@ -406,8 +440,15 @@ impl Store {
         Ok(())
     }
 
+    /// Deletes an entry. Entries that exist remotely are only marked, so the
+    /// next sync can delete them there too.
     pub fn delete_entry(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM entries WHERE id = ?1", [id])?;
+        self.conn.execute(
+            "UPDATE entries SET deleted = 1, dirty = 1 WHERE id = ?1 AND remote_id IS NOT NULL",
+            [id],
+        )?;
+        self.conn
+            .execute("DELETE FROM entries WHERE id = ?1 AND remote_id IS NULL", [id])?;
         Ok(())
     }
 }
@@ -426,8 +467,8 @@ pub struct EntryInput {
 
 fn stop_running(conn: &Connection, now: i64) -> Result<usize> {
     conn.execute(
-        "UPDATE entries SET end_at = MAX(start_at, ?1), updated_at = ?1
-         WHERE start_at IS NOT NULL AND end_at IS NULL",
+        "UPDATE entries SET end_at = MAX(start_at, ?1), updated_at = ?1, dirty = 1
+         WHERE start_at IS NOT NULL AND end_at IS NULL AND deleted = 0",
         [now],
     )
 }

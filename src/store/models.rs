@@ -82,3 +82,22 @@ impl Entry {
         }
     }
 }
+
+/// A client connected to a service (currently Fibery).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Account {
+    pub id: i64,
+    pub client_id: i64,
+    pub service: String,
+    pub workspace: String,
+    pub user_id: String,
+    pub user_name: String,
+    /// JSON of `fibery::Mapping`.
+    pub mapping: String,
+    pub mirror_timer: bool,
+    /// Only set when no system keyring is available.
+    pub token: Option<String>,
+    pub last_sync_at: Option<i64>,
+    pub last_error: Option<String>,
+    pub created_at: i64,
+}

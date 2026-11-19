@@ -17,6 +17,8 @@ mod imp {
     #[derive(Debug, Default)]
     pub struct TimeTrackerApplication {
         pub store: OnceCell<Rc<Store>>,
+        /// A `data-changed` emission is scheduled.
+        pub change_pending: std::cell::Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -29,7 +31,12 @@ mod imp {
     impl ObjectImpl for TimeTrackerApplication {
         fn signals() -> &'static [glib::subclass::Signal] {
             static SIGNALS: OnceLock<Vec<glib::subclass::Signal>> = OnceLock::new();
-            SIGNALS.get_or_init(|| vec![glib::subclass::Signal::builder("data-changed").build()])
+            SIGNALS.get_or_init(|| {
+                vec![
+                    glib::subclass::Signal::builder("data-changed").build(),
+                    glib::subclass::Signal::builder("sync-changed").build(),
+                ]
+            })
         }
     }
 
@@ -47,6 +54,7 @@ mod imp {
             let app = self.obj();
             app.setup_actions();
             app.setup_accels();
+            crate::sync::start();
         }
 
         fn activate(&self) {
@@ -88,12 +96,34 @@ impl TimeTrackerApplication {
     }
 
     /// Tells all views that stored data changed and they should reload.
+    ///
+    /// Emitted once after the current event, so views never rebuild widgets
+    /// in the middle of handling a click or focus change on them.
     pub fn data_changed(&self) {
-        self.emit_by_name::<()>("data-changed", &[]);
+        if self.imp().change_pending.replace(true) {
+            return;
+        }
+        glib::idle_add_local_once(glib::clone!(
+            #[weak(rename_to = app)]
+            self,
+            move || {
+                app.imp().change_pending.set(false);
+                app.emit_by_name::<()>("data-changed", &[]);
+            }
+        ));
     }
 
     pub fn connect_data_changed<F: Fn(&Self) + 'static>(&self, f: F) -> glib::SignalHandlerId {
         self.connect_local("data-changed", false, move |args| {
+            let app = args[0].get::<Self>().expect("Signal emitted by the application");
+            f(&app);
+            None
+        })
+    }
+
+    /// The sync status changed (see `crate::sync::status`).
+    pub fn connect_sync_changed<F: Fn(&Self) + 'static>(&self, f: F) -> glib::SignalHandlerId {
+        self.connect_local("sync-changed", false, move |args| {
             let app = args[0].get::<Self>().expect("Signal emitted by the application");
             f(&app);
             None

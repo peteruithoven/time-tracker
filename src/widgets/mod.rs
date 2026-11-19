@@ -1,4 +1,5 @@
 mod clients_dialog;
+mod connect_dialog;
 mod entry_dialog;
 mod month_picker;
 mod new_project_dialog;
@@ -8,6 +9,7 @@ mod task_picker;
 mod track_page;
 
 pub use clients_dialog::ClientsDialog;
+pub use connect_dialog::ConnectDialog;
 pub use entry_dialog::EntryDialog;
 pub use month_picker::MonthPicker;
 pub use new_project_dialog::NewProjectDialog;

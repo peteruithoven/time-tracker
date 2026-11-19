@@ -10,7 +10,7 @@ exec flatpak run \
   --filesystem=home \
   --share=network \
   --env=PATH=/usr/bin:/usr/lib/sdk/rust-stable/bin \
-  --env=CARGO_HOME="$HOME/.cargo" \
+  --env=CARGO_HOME="$HOME/.cache/time-tracker-cargo" \
   --cwd="$(cd "$(dirname "$0")/.." && pwd)" \
   --command=cargo \
   org.gnome.Sdk//51 "$@"
