@@ -211,7 +211,7 @@ impl ReviewPage {
         self.rebuild_table();
     }
 
-    fn step_month(&self, delta: i32) {
+    pub fn step_month(&self, delta: i32) {
         let (year, month) = self.imp().month.get();
         let index = year * 12 + month as i32 - 1 + delta;
         self.set_month(index.div_euclid(12), index.rem_euclid(12) as u32 + 1);
@@ -653,6 +653,11 @@ impl ReviewPage {
                 glib::g_critical!("time-tracker", "Could not export: {err}");
             }
         });
+    }
+
+    /// Add Time for the shown month (today when that's in it).
+    pub fn add_time_now(&self) {
+        self.add_time(None, &self.default_date(None));
     }
 
     fn add_time(&self, task_id: Option<i64>, date: &str) {

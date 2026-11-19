@@ -115,7 +115,12 @@ glib::wrapper! {
 }
 
 impl TrackPage {
-    fn toggle_timer(&self) {
+    /// Opens the task picker.
+    pub fn choose_task(&self) {
+        self.imp().task_button.popup();
+    }
+
+    pub fn toggle_timer(&self) {
         let imp = self.imp();
         if imp.running.borrow().is_some() {
             let store = TimeTrackerApplication::get().store();

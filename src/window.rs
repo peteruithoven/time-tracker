@@ -15,6 +15,8 @@ mod imp {
         #[template_child]
         pub view_stack: TemplateChild<adw::ViewStack>,
         #[template_child]
+        pub track_page: TemplateChild<crate::widgets::TrackPage>,
+        #[template_child]
         pub review_page: TemplateChild<crate::widgets::ReviewPage>,
         #[template_child]
         pub sync_button: TemplateChild<gtk::MenuButton>,
@@ -32,6 +34,7 @@ mod imp {
             Self {
                 view_toggle: TemplateChild::default(),
                 view_stack: TemplateChild::default(),
+                track_page: TemplateChild::default(),
                 review_page: TemplateChild::default(),
                 sync_button: TemplateChild::default(),
                 sync_title: TemplateChild::default(),
@@ -87,7 +90,44 @@ mod imp {
                     imp.review_page.export_csv();
                 })
                 .build();
-            obj.add_action_entries([export]);
+            type Window = super::TimeTrackerWindow;
+            let show = |name: &'static str| {
+                gio::ActionEntry::builder(&format!("view-{name}"))
+                    .activate(move |window: &Window, _, _| window.imp().view_stack.set_visible_child_name(name))
+                    .build()
+            };
+            let toggle_timer = gio::ActionEntry::builder("toggle-timer")
+                .activate(|window: &Window, _, _| window.imp().track_page.toggle_timer())
+                .build();
+            let choose_task = gio::ActionEntry::builder("choose-task")
+                .activate(|window: &Window, _, _| {
+                    let imp = window.imp();
+                    imp.view_stack.set_visible_child_name("track");
+                    imp.track_page.choose_task();
+                })
+                .build();
+            let add_time = gio::ActionEntry::builder("add-time")
+                .activate(|window: &Window, _, _| window.imp().review_page.add_time_now())
+                .build();
+            let month = |name: &str, delta: i32| {
+                gio::ActionEntry::builder(name)
+                    .activate(move |window: &Window, _, _| {
+                        let imp = window.imp();
+                        imp.view_stack.set_visible_child_name("review");
+                        imp.review_page.step_month(delta);
+                    })
+                    .build()
+            };
+            obj.add_action_entries([
+                export,
+                show("track"),
+                show("review"),
+                toggle_timer,
+                choose_task,
+                add_time,
+                month("previous-month", -1),
+                month("next-month", 1),
+            ]);
 
             self.sync_now_button.connect_clicked(|button| {
                 if let Some(popover) = button.ancestor(gtk::Popover::static_type()) {

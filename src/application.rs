@@ -142,13 +142,35 @@ impl TimeTrackerApplication {
                 crate::widgets::ClientsDialog::default().present(app.active_window().as_ref());
             })
             .build();
-        self.add_action_entries([quit, about, clients]);
+        let shortcuts = gio::ActionEntry::builder("shortcuts")
+            .activate(|app: &Self, _, _| app.show_shortcuts())
+            .build();
+        self.add_action_entries([quit, about, clients, shortcuts]);
     }
 
     fn setup_accels(&self) {
         self.set_accels_for_action("app.quit", &["<Control>q"]);
         self.set_accels_for_action("window.close", &["<Control>w"]);
-        self.set_accels_for_action("win.export", &["<Control>e"]);
+        for (action, accels) in [
+            ("win.export", &["<Control>e"][..]),
+            ("win.toggle-timer", &["<Control>t"]),
+            ("win.choose-task", &["<Control>k"]),
+            ("win.add-time", &["<Control>n"]),
+            ("win.view-track", &["<Control>1"]),
+            ("win.view-review", &["<Control>2"]),
+            ("win.previous-month", &["<Control>Page_Up"]),
+            ("win.next-month", &["<Control>Page_Down"]),
+            ("app.clients", &["<Control>comma"]),
+            ("app.shortcuts", &["<Control>question"]),
+        ] {
+            self.set_accels_for_action(action, accels);
+        }
+    }
+
+    fn show_shortcuts(&self) {
+        let builder = gtk::Builder::from_resource("/nl/peteruithoven/TimeTracker/keyboard_shortcuts.ui");
+        let dialog: adw::ShortcutsDialog = builder.object("shortcuts_dialog").expect("Shortcuts dialog in resource");
+        dialog.present(self.active_window().as_ref());
     }
 
     fn show_about(&self) {

@@ -6,6 +6,7 @@ blueprints = custom_target(
     'widgets/review_page.blp',
     'widgets/task_picker.blp',
     'widgets/track_page.blp',
+    'keyboard_shortcuts.blp',
     'window.blp',
   ),
   output: '.',

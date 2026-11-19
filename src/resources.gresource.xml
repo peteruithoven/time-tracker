@@ -2,6 +2,7 @@
 <gresources>
   <gresource prefix="/nl/peteruithoven/TimeTracker/">
     <file preprocess="xml-stripblanks">window.ui</file>
+    <file preprocess="xml-stripblanks">keyboard_shortcuts.ui</file>
     <file preprocess="xml-stripblanks" alias="track_page.ui">widgets/track_page.ui</file>
     <file preprocess="xml-stripblanks" alias="task_picker.ui">widgets/task_picker.ui</file>
     <file preprocess="xml-stripblanks" alias="new_project_dialog.ui">widgets/new_project_dialog.ui</file>
