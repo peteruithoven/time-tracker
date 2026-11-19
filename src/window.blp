@@ -1,0 +1,62 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $TimeTrackerWindow: Adw.ApplicationWindow {
+  title: _("Time Tracker");
+  width-request: 360;
+  height-request: 400;
+
+  content: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      title-widget: Adw.ToggleGroup view_toggle {
+        Adw.Toggle {
+          name: "track";
+          label: _("Track");
+        }
+
+        Adw.Toggle {
+          name: "review";
+          label: _("Review");
+        }
+      };
+
+      [end]
+      MenuButton {
+        primary: true;
+        icon-name: "open-menu-symbolic";
+        tooltip-text: _("Main Menu");
+        menu-model: primary_menu;
+      }
+    }
+
+    content: Adw.ViewStack view_stack {
+      Adw.ViewStackPage {
+        name: "track";
+        title: _("Track");
+
+        child: $TrackPage track_page {};
+      }
+
+      Adw.ViewStackPage {
+        name: "review";
+        title: _("Review");
+
+        child: Adw.StatusPage {
+          icon-name: "x-office-calendar-symbolic";
+          title: _("Review");
+          description: _("Tracked time per client and project will live here.");
+        };
+      }
+    };
+  };
+}
+
+menu primary_menu {
+  section {
+    item {
+      label: _("_About Time Tracker");
+      action: "app.about";
+    }
+  }
+}

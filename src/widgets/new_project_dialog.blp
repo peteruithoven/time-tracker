@@ -1,0 +1,55 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $NewProjectDialog: Adw.Dialog {
+  title: _("New Project");
+  content-width: 380;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-start-title-buttons: false;
+      show-end-title-buttons: false;
+
+      [start]
+      Button cancel_button {
+        label: _("Cancel");
+      }
+
+      [end]
+      Button create_button {
+        label: _("Create");
+        sensitive: false;
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    content: Adw.PreferencesPage {
+      Adw.PreferencesGroup {
+        Adw.EntryRow name_row {
+          title: _("Name");
+        }
+
+        Adw.ComboRow client_row {
+          title: _("Client");
+        }
+
+        Adw.EntryRow new_client_row {
+          title: _("New Client Name");
+          visible: false;
+        }
+      }
+
+      Adw.PreferencesGroup {
+        title: _("Color");
+
+        Box color_box {
+          spacing: 8;
+        }
+      }
+    };
+  };
+}

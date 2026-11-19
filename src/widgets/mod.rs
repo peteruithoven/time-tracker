@@ -1,0 +1,27 @@
+mod new_project_dialog;
+mod project_picker;
+mod task_picker;
+mod track_page;
+
+pub use new_project_dialog::NewProjectDialog;
+pub use project_picker::ProjectPicker;
+pub use task_picker::TaskPicker;
+pub use track_page::{TrackPage, set_source_badge};
+
+use gtk::prelude::*;
+
+/// Project colors offered when creating a project. Each name is also a CSS
+/// class (see `style.css`).
+pub const PROJECT_COLORS: &[&str] = &[
+    "blue", "green", "yellow", "orange", "red", "purple", "brown", "slate",
+];
+
+/// A small colored circle for a project; tasks without a project get slate.
+pub fn project_color_dot(color: Option<&str>) -> gtk::Box {
+    let dot = gtk::Box::builder()
+        .valign(gtk::Align::Center)
+        .css_classes(["project-dot", color.unwrap_or("slate")])
+        .build();
+    dot.set_accessible_role(gtk::AccessibleRole::Presentation);
+    dot
+}

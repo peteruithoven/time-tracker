@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>@app-id@</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Time Tracker</name>
+  <summary>Track time for clients and projects</summary>
+  <description>
+    <p>
+      A compact time tracker for freelancers. Start and stop a timer on tasks
+      from your own projects or from Fibery, review tracked time per client and
+      project, and sync time logs back to Fibery.
+    </p>
+  </description>
+  <developer id="nl.peteruithoven">
+    <name translate="no">Peter Uithoven</name>
+  </developer>
+  <url type="homepage">https://github.com/peteruithoven/time-tracker</url>
+  <url type="bugtracker">https://github.com/peteruithoven/time-tracker/issues</url>
+  <url type="vcs-browser">https://github.com/peteruithoven/time-tracker</url>
+  <launchable type="desktop-id">@app-id@.desktop</launchable>
+  <translation type="gettext">@gettext-package@</translation>
+  <content_rating type="oars-1.1"/>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <branding>
+    <color type="primary" scheme_preference="light">#99c1f1</color>
+    <color type="primary" scheme_preference="dark">#1a5fb4</color>
+  </branding>
+  <releases>
+    <release version="0.1.0" date="2026-11-19">
+      <description>
+        <p>Initial development version.</p>
+      </description>
+    </release>
+  </releases>
+</component>

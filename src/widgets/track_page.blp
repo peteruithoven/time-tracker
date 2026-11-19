@@ -1,0 +1,176 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $TrackPage: Adw.Bin {
+  child: ScrolledWindow {
+    hscrollbar-policy: never;
+
+    child: Adw.Clamp {
+      maximum-size: 520;
+
+      child: Box {
+        orientation: vertical;
+        spacing: 12;
+        margin-top: 18;
+        margin-bottom: 18;
+        margin-start: 16;
+        margin-end: 16;
+
+        Box {
+          spacing: 16;
+
+          Button timer_button {
+            valign: center;
+            icon-name: "media-playback-start-symbolic";
+            tooltip-text: _("Start Timer");
+
+            styles [
+              "circular",
+              "timer-button",
+              "suggested-action",
+            ]
+          }
+
+          Box {
+            orientation: vertical;
+            valign: center;
+            spacing: 2;
+
+            Label elapsed_label {
+              xalign: 0;
+              label: "0:00:00";
+
+              styles [
+                "title-1",
+                "numeric",
+                "elapsed",
+              ]
+            }
+
+            Label status_label {
+              xalign: 0;
+              label: _("Not tracking");
+
+              styles [
+                "dim-label",
+              ]
+            }
+          }
+        }
+
+        MenuButton task_button {
+          tooltip-text: _("Choose Task");
+
+          popover: $TaskPicker task_picker {};
+
+          child: Box {
+            spacing: 10;
+
+            Box {
+              orientation: vertical;
+              hexpand: true;
+              spacing: 3;
+
+              Label task_title {
+                xalign: 0;
+                ellipsize: end;
+                label: _("Choose a Task");
+
+                styles [
+                  "heading",
+                ]
+              }
+
+              Box {
+                spacing: 6;
+
+                Label task_source {
+                  visible: false;
+
+                  styles [
+                    "source-badge",
+                  ]
+                }
+
+                Label task_meta {
+                  xalign: 0;
+                  ellipsize: end;
+                  label: _("Pick or create a task to track");
+
+                  styles [
+                    "caption",
+                    "dim-label",
+                  ]
+                }
+              }
+            }
+
+            Image {
+              icon-name: "pan-down-symbolic";
+            }
+          };
+
+          styles [
+            "task-button",
+          ]
+        }
+
+        ListBox {
+          selection-mode: none;
+
+          Adw.EntryRow note_row {
+            title: _("Note");
+            sensitive: false;
+          }
+
+          styles [
+            "boxed-list",
+          ]
+        }
+
+        Box {
+          margin-top: 10;
+          margin-start: 4;
+          margin-end: 4;
+
+          Label {
+            hexpand: true;
+            xalign: 0;
+            label: _("Today");
+
+            styles [
+              "heading",
+            ]
+          }
+
+          Label today_total_label {
+            label: "0:00";
+
+            styles [
+              "heading",
+              "numeric",
+              "dim-label",
+            ]
+          }
+        }
+
+        ListBox today_list {
+          selection-mode: none;
+
+          styles [
+            "boxed-list",
+          ]
+        }
+
+        Label today_empty {
+          label: _("Nothing tracked yet today");
+          margin-top: 12;
+
+          styles [
+            "dim-label",
+          ]
+        }
+      };
+    };
+  };
+}
