@@ -32,7 +32,7 @@ pub const SCRIPT: Script = Script {
     name: "Avec Sans Moneybird invoice",
     help: "Creates a draft in Moneybird with a line per project in days (hourly rate × 8), copying the contact and VAT from an earlier invoice. \
            Create a personal API token at moneybird.com/user/applications/new with access to sales invoices.",
-    settings: &[SettingField { key: TEMPLATE_URL, title: "Template invoice address" }],
+    settings: &[SettingField { key: TEMPLATE_URL, title: "Template Invoice Address" }],
     describe_line,
     check,
     create,

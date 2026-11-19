@@ -480,15 +480,18 @@ impl ClientsDialog {
         section.set_rows(new_rows);
     }
 
-    /// The "Invoicing" section: pick an invoice script and set its token.
+    /// The "Invoicing" section: pick an invoice script, then fill in its
+    /// settings and API token right here. A status row checks them.
     fn add_invoicing(&self, page: &adw::PreferencesPage, client: &Client) {
         use crate::invoicing::SCRIPTS;
 
+        let client_id = client.id;
         let group = adw::PreferencesGroup::builder().title(gettext("Invoicing")).build();
         let names = gtk::StringList::new(&[&gettext("None")]);
         for script in SCRIPTS {
             names.append(script.name);
         }
+        let script_at = |index: u32| (index as usize).checked_sub(1).and_then(|i| SCRIPTS.get(i));
         let selected = client
             .invoice_script
             .as_deref()
@@ -496,190 +499,35 @@ impl ClientsDialog {
             .map_or(0, |i| i as u32 + 1);
         let script_row = adw::ComboRow::builder()
             .title(gettext("Invoice Script"))
-            .subtitle(gettext("Creates the month's invoice from the Review view"))
             .model(&names)
             .selected(selected)
             .build();
-        let token_row = adw::ActionRow::builder()
-            .title(gettext("API Token"))
-            .subtitle(gettext("Stored in your keyring"))
-            .visible(selected > 0)
-            .build();
-        let change = gtk::Button::builder()
-            .label(gettext("Change…"))
-            .valign(gtk::Align::Center)
-            .build();
-        token_row.add_suffix(&change);
         group.add(&script_row);
-        group.add(&token_row);
         page.add(&group);
 
-        let client_id = client.id;
-        let current = Rc::new(std::cell::Cell::new(selected));
+        let rows: Rc<Section<gtk::Widget>> = Rc::default();
+        fill_invoicing(&group, &rows, client_id, script_at(selected));
         script_row.connect_selected_notify(clone!(
-            #[weak(rename_to = dialog)]
-            self,
             #[weak]
-            token_row,
-            #[strong]
-            current,
+            group,
             move |row| {
-                let choice = row.selected();
-                if choice == current.get() {
+                let script = script_at(row.selected());
+                let app = TimeTrackerApplication::get();
+                let store = app.store();
+                let previous = store.client(client_id).ok().flatten().and_then(|c| c.invoice_script);
+                if previous.as_deref() == script.map(|s| s.id) {
                     return;
                 }
-                if choice == 0 {
-                    let previous = SCRIPTS[current.get() as usize - 1].id;
-                    current.set(0);
-                    token_row.set_visible(false);
-                    let app = TimeTrackerApplication::get();
-                    let _ = app.store().set_client_invoice_script(client_id, None, None);
-                    app.data_changed();
+                if let Some(previous) = previous {
                     glib::spawn_future_local(async move {
-                        let _ = crate::secrets::delete_invoice_token(previous, client_id).await;
+                        let _ = crate::secrets::delete_invoice_token(&previous, client_id).await;
                     });
-                    return;
                 }
-                let script = &SCRIPTS[choice as usize - 1];
-                dialog.ask_invoice_token(
-                    script,
-                    client_id,
-                    clone!(
-                        #[weak]
-                        row,
-                        #[weak]
-                        token_row,
-                        #[strong]
-                        current,
-                        move |ok| {
-                            if ok {
-                                current.set(choice);
-                                token_row.set_visible(true);
-                            } else {
-                                // Back to what's stored.
-                                row.set_selected(current.get());
-                            }
-                        }
-                    ),
-                );
+                let _ = store.set_client_invoice_script(client_id, script.map(|s| s.id), None);
+                app.data_changed();
+                fill_invoicing(&group, &rows, client_id, script);
             }
         ));
-        change.connect_clicked(clone!(
-            #[weak(rename_to = dialog)]
-            self,
-            #[strong]
-            current,
-            move |_| {
-                if let Some(script) = SCRIPTS.get((current.get() as usize).wrapping_sub(1)) {
-                    dialog.ask_invoice_token(script, client_id, |_| {});
-                }
-            }
-        ));
-    }
-
-    /// Asks for, checks and stores the API token of `script`, then enables
-    /// the script for the client. `done` gets whether that worked.
-    /// Asks for the API token and settings of `script`, checks them, stores
-    /// them and enables the script for the client. When changing, an empty
-    /// token keeps the stored one. `done` gets whether that worked.
-    fn ask_invoice_token(&self, script: &'static crate::invoicing::Script, client_id: i64, done: impl Fn(bool) + 'static) {
-        let done = Rc::new(done);
-        let client = TimeTrackerApplication::get().store().client(client_id).ok().flatten();
-        let changing = client.as_ref().and_then(|c| c.invoice_script.as_deref()) == Some(script.id);
-        let current = crate::invoicing::parse_settings(client.as_ref().and_then(|c| c.invoice_settings.as_deref()));
-
-        let form = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(12).build();
-        let mut fields: Vec<(&'static str, gtk::Entry)> = Vec::new();
-        for setting in script.settings {
-            let entry = gtk::Entry::builder()
-                .placeholder_text(setting.title)
-                .text(current.get(setting.key).map(String::as_str).unwrap_or_default())
-                .activates_default(true)
-                .build();
-            entry.update_property(&[gtk::accessible::Property::Label(setting.title)]);
-            form.append(&entry);
-            fields.push((setting.key, entry));
-        }
-        let token_entry = gtk::PasswordEntry::builder()
-            .show_peek_icon(true)
-            .activates_default(true)
-            .placeholder_text(if changing { gettext("API token (empty keeps the current one)") } else { gettext("API token") })
-            .build();
-        form.append(&token_entry);
-
-        let alert = adw::AlertDialog::new(Some(script.name), Some(script.help));
-        alert.set_extra_child(Some(&form));
-        alert.add_responses(&[("cancel", &gettext("_Cancel")), ("save", &gettext("_Save"))]);
-        alert.set_response_appearance("save", adw::ResponseAppearance::Suggested);
-        alert.set_default_response(Some("save"));
-        alert.set_close_response("cancel");
-
-        let fields = Rc::new(fields);
-        let update = clone!(
-            #[weak]
-            alert,
-            #[weak]
-            token_entry,
-            #[strong]
-            fields,
-            move || {
-                let complete = fields.iter().all(|(_, e)| !e.text().trim().is_empty())
-                    && (changing || !token_entry.text().trim().is_empty());
-                alert.set_response_enabled("save", complete);
-            }
-        );
-        update();
-        let update = Rc::new(update);
-        for (_, entry) in fields.iter() {
-            let update = update.clone();
-            entry.connect_changed(move |_| update());
-        }
-        token_entry.connect_changed(clone!(
-            #[strong]
-            update,
-            move |_| update()
-        ));
-
-        alert.connect_response(
-            None,
-            clone!(
-                #[weak(rename_to = dialog)]
-                self,
-                #[weak]
-                token_entry,
-                #[strong]
-                fields,
-                move |_, response| {
-                    if response != "save" {
-                        done(false);
-                        return;
-                    }
-                    let settings: crate::invoicing::Settings = fields
-                        .iter()
-                        .map(|(key, entry)| (key.to_string(), entry.text().trim().to_string()))
-                        .collect();
-                    let typed = token_entry.text().trim().to_string();
-                    let done = done.clone();
-                    glib::spawn_future_local(clone!(
-                        #[weak]
-                        dialog,
-                        async move {
-                            let result = save_invoice_script(script, client_id, settings, typed).await;
-                            match result {
-                                Ok(()) => done(true),
-                                Err(err) => {
-                                    done(false);
-                                    let alert = adw::AlertDialog::new(Some(&gettext("Invoice Script Not Saved")), Some(&err));
-                                    alert.add_response("close", &gettext("_Close"));
-                                    alert.present(Some(&dialog));
-                                }
-                            }
-                        }
-                    ));
-                }
-            ),
-        );
-        alert.present(Some(self));
     }
 
     fn confirm_disconnect(&self, account: crate::store::Account) {
@@ -854,37 +702,143 @@ impl ClientsDialog {
     }
 }
 
-/// Checks token and settings with the script, then stores them. An empty
-/// `typed_token` reuses the token in the keyring.
-async fn save_invoice_script(
-    script: &'static crate::invoicing::Script,
+/// The rows below the script choice: its settings, API token and status.
+fn fill_invoicing(
+    group: &adw::PreferencesGroup,
+    section: &Section<gtk::Widget>,
     client_id: i64,
-    settings: crate::invoicing::Settings,
-    typed_token: String,
-) -> Result<(), String> {
-    let token = if typed_token.is_empty() {
-        crate::secrets::load_invoice_token(script.id, client_id)
-            .await?
-            .ok_or_else(|| gettext("Enter an API token."))?
-    } else {
-        typed_token.clone()
-    };
-    let (check_token, check_settings) = (token.clone(), settings.clone());
-    gio::spawn_blocking(move || (script.check)(&check_token, &check_settings))
-        .await
-        .map_err(|_| gettext("Checking failed unexpectedly"))??;
-    if !typed_token.is_empty() {
-        crate::secrets::store_invoice_token(script.id, client_id, script.name, &token)
-            .await
-            .map_err(|e| gettext("Could not store the token in the keyring: {}").replace("{}", &e))?;
+    script: Option<&'static crate::invoicing::Script>,
+) {
+    if !section.begin(group, script.map(|s| s.id).unwrap_or_default().to_string()) {
+        return;
     }
-    let json = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
-    let app = TimeTrackerApplication::get();
-    app.store()
-        .set_client_invoice_script(client_id, Some(script.id), Some(&json))
-        .map_err(|e| e.to_string())?;
-    app.data_changed();
-    Ok(())
+    let Some(script) = script else {
+        group.set_description(Some(&gettext("Creates the month's invoice from the Review view")));
+        section.set_rows(Vec::new());
+        return;
+    };
+    group.set_description(Some(script.help));
+    let store = TimeTrackerApplication::get().store();
+    let settings =
+        crate::invoicing::parse_settings(store.client(client_id).ok().flatten().and_then(|c| c.invoice_settings).as_deref());
+
+    let status = adw::ActionRow::builder().title(gettext("Status")).use_markup(false).build();
+    let check = Rc::new(clone!(
+        #[weak]
+        status,
+        move || check_invoicing(&status, client_id, script)
+    ));
+    let mut rows: Vec<gtk::Widget> = Vec::new();
+
+    for setting in script.settings {
+        let row = adw::EntryRow::builder()
+            .title(setting.title)
+            .text(settings.get(setting.key).map(String::as_str).unwrap_or_default())
+            .show_apply_button(true)
+            .build();
+        let key = setting.key;
+        let check = check.clone();
+        row.connect_apply(move |row| {
+            let app = TimeTrackerApplication::get();
+            let store = app.store();
+            let client = store.client(client_id).ok().flatten();
+            let mut settings = crate::invoicing::parse_settings(client.and_then(|c| c.invoice_settings).as_deref());
+            settings.insert(key.to_string(), row.text().trim().to_string());
+            let json = serde_json::to_string(&settings).unwrap_or_default();
+            let _ = store.set_client_invoice_script(client_id, Some(script.id), Some(&json));
+            app.data_changed();
+            check();
+        });
+        group.add(&row);
+        rows.push(row.upcast());
+    }
+
+    // Empty until you type a new token; the status says whether one is stored.
+    let token = adw::PasswordEntryRow::builder()
+        .title(gettext("API Token"))
+        .show_apply_button(true)
+        .build();
+    token.connect_apply(clone!(
+        #[weak]
+        status,
+        #[strong]
+        check,
+        move |row| {
+            let text = row.text().trim().to_string();
+            let check = check.clone();
+            glib::spawn_future_local(clone!(
+                #[weak]
+                status,
+                async move {
+                    let result = if text.is_empty() {
+                        crate::secrets::delete_invoice_token(script.id, client_id).await
+                    } else {
+                        crate::secrets::store_invoice_token(script.id, client_id, script.name, &text).await
+                    };
+                    match result {
+                        Ok(()) => check(),
+                        Err(err) => set_invoicing_status(
+                            &status,
+                            &gettext("Could not store the token in the keyring: {}").replace("{}", &err),
+                            true,
+                        ),
+                    }
+                }
+            ));
+        }
+    ));
+    group.add(&token);
+    rows.push(token.upcast());
+    group.add(&status);
+    rows.push(status.upcast());
+    check();
+    section.set_rows(rows);
+}
+
+fn set_invoicing_status(row: &adw::ActionRow, text: &str, error: bool) {
+    row.set_subtitle(text);
+    if error {
+        row.add_css_class("error");
+    } else {
+        row.remove_css_class("error");
+    }
+}
+
+/// Checks the stored settings and token with the script and shows the
+/// outcome in `status`.
+fn check_invoicing(status: &adw::ActionRow, client_id: i64, script: &'static crate::invoicing::Script) {
+    set_invoicing_status(status, &gettext("Checking…"), false);
+    glib::spawn_future_local(clone!(
+        #[weak]
+        status,
+        async move {
+            let (text, error) = invoicing_status(client_id, script).await;
+            set_invoicing_status(&status, &text, error);
+        }
+    ));
+}
+
+/// The status text, and whether it's an error rather than a missing value.
+async fn invoicing_status(client_id: i64, script: &'static crate::invoicing::Script) -> (String, bool) {
+    let client = TimeTrackerApplication::get().store().client(client_id).ok().flatten();
+    let settings = crate::invoicing::parse_settings(client.and_then(|c| c.invoice_settings).as_deref());
+    let missing = script
+        .settings
+        .iter()
+        .find(|s| settings.get(s.key).is_none_or(|v| v.trim().is_empty()));
+    if let Some(missing) = missing {
+        return (gettext("Enter the {}").replace("{}", &missing.title.to_lowercase()), false);
+    }
+    let token = match crate::secrets::load_invoice_token(script.id, client_id).await {
+        Ok(Some(token)) => token,
+        Ok(None) => return (gettext("Enter the API token"), false),
+        Err(err) => return (gettext("Could not read the keyring: {}").replace("{}", &err), true),
+    };
+    match gio::spawn_blocking(move || (script.check)(&token, &settings)).await {
+        Ok(Ok(())) => (gettext("Ready · the API token is stored in your keyring"), false),
+        Ok(Err(err)) => (err, true),
+        Err(_) => (gettext("Checking failed unexpectedly"), true),
+    }
 }
 
 fn fill_tasks(group: &adw::PreferencesGroup, section: &Section<adw::ActionRow>, client_id: i64, project_id: Option<i64>) {
