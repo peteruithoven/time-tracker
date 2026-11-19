@@ -3,9 +3,14 @@ data/nl.peteruithoven.TimeTracker.metainfo.xml.in.in
 data/nl.peteruithoven.TimeTracker.gschema.xml.in
 src/application.rs
 src/main.rs
+src/widgets/entry_dialog.blp
+src/widgets/entry_dialog.rs
+src/widgets/month_picker.rs
 src/widgets/new_project_dialog.blp
 src/widgets/new_project_dialog.rs
 src/widgets/project_picker.rs
+src/widgets/review_page.blp
+src/widgets/review_page.rs
 src/widgets/task_picker.blp
 src/widgets/task_picker.rs
 src/widgets/track_page.blp

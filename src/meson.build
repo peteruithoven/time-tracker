@@ -1,7 +1,9 @@
 blueprints = custom_target(
   'blueprints',
   input: files(
+    'widgets/entry_dialog.blp',
     'widgets/new_project_dialog.blp',
+    'widgets/review_page.blp',
     'widgets/task_picker.blp',
     'widgets/track_page.blp',
     'window.blp',

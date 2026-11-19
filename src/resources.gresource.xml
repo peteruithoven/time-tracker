@@ -5,6 +5,8 @@
     <file preprocess="xml-stripblanks" alias="track_page.ui">widgets/track_page.ui</file>
     <file preprocess="xml-stripblanks" alias="task_picker.ui">widgets/task_picker.ui</file>
     <file preprocess="xml-stripblanks" alias="new_project_dialog.ui">widgets/new_project_dialog.ui</file>
+    <file preprocess="xml-stripblanks" alias="review_page.ui">widgets/review_page.ui</file>
+    <file preprocess="xml-stripblanks" alias="entry_dialog.ui">widgets/entry_dialog.ui</file>
     <file compressed="true">style.css</file>
   </gresource>
 </gresources>

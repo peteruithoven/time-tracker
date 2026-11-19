@@ -35,6 +35,7 @@ mod imp {
 
         fn class_init(klass: &mut Self::Class) {
             crate::widgets::TrackPage::ensure_type();
+            crate::widgets::ReviewPage::ensure_type();
             klass.bind_template();
         }
 

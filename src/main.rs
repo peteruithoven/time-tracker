@@ -2,6 +2,7 @@ mod application;
 mod config;
 mod format;
 mod fuzzy;
+mod report;
 mod store;
 mod widgets;
 mod window;

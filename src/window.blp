@@ -42,14 +42,19 @@ template $TimeTrackerWindow: Adw.ApplicationWindow {
         name: "review";
         title: _("Review");
 
-        child: Adw.StatusPage {
-          icon-name: "x-office-calendar-symbolic";
-          title: _("Review");
-          description: _("Tracked time per client and project will live here.");
-        };
+        child: $ReviewPage review_page {};
       }
     };
   };
+
+  // Below this width the Review table only shows the total column.
+  Adw.Breakpoint {
+    condition ("max-width: 620sp")
+
+    setters {
+      review_page.compact: true;
+    }
+  }
 }
 
 menu primary_menu {

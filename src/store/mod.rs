@@ -80,7 +80,8 @@ const TASK_SELECT: &str = "
 
 const ENTRY_SELECT: &str = "
     SELECT e.id, e.task_id, t.name, p.name, c.name, p.color, t.remote_id IS NOT NULL,
-           e.date, e.start_at, e.end_at, e.duration_secs, e.note
+           e.date, e.start_at, e.end_at, e.duration_secs, e.note,
+           t.client_id, c.source, t.project_id
     FROM entries e
     JOIN tasks t ON t.id = e.task_id
     JOIN clients c ON c.id = t.client_id
@@ -278,6 +279,87 @@ impl Store {
         )?;
         Ok(())
     }
+
+    pub fn entry(&self, id: i64) -> Result<Option<Entry>> {
+        let sql = format!("{ENTRY_SELECT} WHERE e.id = ?1");
+        self.conn.query_row(&sql, [id], entry_from_row).optional()
+    }
+
+    /// Entries with a date from `first` to `last` (inclusive, YYYY-MM-DD),
+    /// oldest first.
+    pub fn entries_between(&self, first: &str, last: &str) -> Result<Vec<Entry>> {
+        let sql = format!(
+            "{ENTRY_SELECT} WHERE e.date BETWEEN ?1 AND ?2
+             ORDER BY e.date, COALESCE(e.start_at, e.created_at)"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        stmt.query_map([first, last], entry_from_row)?.collect()
+    }
+
+    /// Tracked seconds per month of `year` (index 0 = January).
+    pub fn month_totals(&self, year: i32, now: i64) -> Result<[i64; 12]> {
+        let mut totals = [0; 12];
+        for entry in self.entries_between(&format!("{year}-01-01"), &format!("{year}-12-31"))? {
+            let month: usize = entry.date.get(5..7).and_then(|m| m.parse().ok()).unwrap_or(1);
+            totals[month.clamp(1, 12) - 1] += entry.duration(now);
+        }
+        Ok(totals)
+    }
+
+    /// Adds an entry added after the fact. It must not be a running one.
+    pub fn add_entry(&self, input: &EntryInput, now: i64) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO entries (task_id, date, start_at, end_at, duration_secs, note,
+                                  created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+            params![
+                input.task_id,
+                input.date,
+                input.start_at,
+                input.end_at,
+                input.duration_secs,
+                input.note,
+                now
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn update_entry(&self, id: i64, input: &EntryInput, now: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE entries SET task_id = ?1, date = ?2, start_at = ?3, end_at = ?4,
+                                duration_secs = ?5, note = ?6, updated_at = ?7
+             WHERE id = ?8",
+            params![
+                input.task_id,
+                input.date,
+                input.start_at,
+                input.end_at,
+                input.duration_secs,
+                input.note,
+                now,
+                id
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_entry(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM entries WHERE id = ?1", [id])?;
+        Ok(())
+    }
+}
+
+/// Values for adding or editing an entry. Either `start_at` (with `end_at`,
+/// or without it for the running entry) or `duration_secs` is set.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntryInput {
+    pub task_id: i64,
+    pub date: String,
+    pub start_at: Option<i64>,
+    pub end_at: Option<i64>,
+    pub duration_secs: Option<i64>,
+    pub note: String,
 }
 
 fn stop_running(conn: &Connection, now: i64) -> Result<usize> {
@@ -317,6 +399,9 @@ fn entry_from_row(row: &Row) -> Result<Entry> {
         end_at: row.get(9)?,
         duration_secs: row.get(10)?,
         note: row.get(11)?,
+        client_id: row.get(12)?,
+        client_is_remote: row.get::<_, Option<String>>(13)?.is_some(),
+        project_id: row.get(14)?,
     })
 }
 
@@ -394,6 +479,58 @@ mod tests {
         assert_eq!(last.id, task);
         assert_eq!(last.project_name.as_deref(), Some("Website"));
         assert_eq!(store.running_entry().unwrap().unwrap().note, "Wireframes");
+    }
+
+    #[test]
+    fn adds_updates_and_deletes_entries() {
+        let (store, client, task) = store_with_task();
+        let other = store.create_task(client, None, "Admin", 0).unwrap();
+        let mut input = EntryInput {
+            task_id: task,
+            date: "2026-11-17".into(),
+            start_at: Some(1_000),
+            end_at: Some(4_600),
+            duration_secs: None,
+            note: "Call".into(),
+        };
+        let id = store.add_entry(&input, 5_000).unwrap();
+        let entry = store.entry(id).unwrap().unwrap();
+        assert_eq!(entry.duration(0), 3_600);
+        assert_eq!(entry.project_name.as_deref(), Some("Website"));
+        assert_eq!(entry.client_id, client);
+
+        input.task_id = other;
+        input.start_at = None;
+        input.end_at = None;
+        input.duration_secs = Some(1_800);
+        store.update_entry(id, &input, 6_000).unwrap();
+        let entry = store.entry(id).unwrap().unwrap();
+        assert_eq!((entry.task_id, entry.duration(0), entry.project_id), (other, 1_800, None));
+
+        store.delete_entry(id).unwrap();
+        assert!(store.entry(id).unwrap().is_none());
+    }
+
+    #[test]
+    fn sums_month_totals_and_ranges() {
+        let (store, _, task) = store_with_task();
+        let manual = |date: &str, secs| EntryInput {
+            task_id: task,
+            date: date.into(),
+            start_at: None,
+            end_at: None,
+            duration_secs: Some(secs),
+            note: String::new(),
+        };
+        store.add_entry(&manual("2026-10-31", 600), 0).unwrap();
+        store.add_entry(&manual("2026-11-01", 60), 0).unwrap();
+        store.add_entry(&manual("2026-11-30", 120), 0).unwrap();
+        store.add_entry(&manual("2027-01-01", 9_999), 0).unwrap();
+
+        let november = store.entries_between("2026-11-01", "2026-11-30").unwrap();
+        assert_eq!(november.len(), 2);
+        let totals = store.month_totals(2026, 0).unwrap();
+        assert_eq!((totals[9], totals[10], totals[0]), (600, 180, 0));
     }
 
     #[test]

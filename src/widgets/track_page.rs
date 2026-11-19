@@ -9,8 +9,7 @@ use gtk::glib::clone;
 use crate::application::TimeTrackerApplication;
 use crate::format;
 use crate::store::{Entry, Task};
-use crate::widgets::TaskPicker;
-use crate::widgets::project_color_dot;
+use crate::widgets::{EntryDialog, TaskPicker, project_color_dot};
 
 mod imp {
     use super::*;
@@ -274,7 +273,15 @@ impl TrackPage {
             .use_markup(false)
             .title_lines(1)
             .subtitle_lines(1)
+            .activatable(true)
+            .tooltip_text(gettext("Edit Entry"))
             .build();
+        let edit_entry = entry.clone();
+        row.connect_activated(clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_| EntryDialog::new_edit(edit_entry.clone()).present(Some(&page))
+        ));
         row.add_prefix(&project_color_dot(entry.color.as_deref()));
 
         let duration = gtk::Label::new(Some(&format::hm(entry.duration(now))));

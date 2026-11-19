@@ -1,0 +1,109 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $ReviewPage: Adw.Bin {
+  child: Box {
+    orientation: vertical;
+
+    Box {
+      orientation: vertical;
+      spacing: 8;
+      margin-top: 12;
+      margin-bottom: 12;
+      margin-start: 16;
+      margin-end: 16;
+
+      Box toolbar {
+        spacing: 6;
+
+        Button previous_button {
+          icon-name: "go-previous-symbolic";
+          tooltip-text: _("Previous Month");
+        }
+
+        MenuButton month_button {
+          tooltip-text: _("Choose Month");
+          popover: $MonthPicker month_picker {};
+
+          child: Box {
+            spacing: 6;
+
+            Label month_label {
+              styles [
+                "title-4",
+              ]
+            }
+
+            Image {
+              icon-name: "pan-down-symbolic";
+            }
+          };
+
+          styles [
+            "flat",
+          ]
+        }
+
+        Button next_button {
+          icon-name: "go-next-symbolic";
+          tooltip-text: _("Next Month");
+        }
+
+        Box {
+          hexpand: true;
+        }
+
+        Box filter_slot {}
+
+        Button add_button {
+          tooltip-text: _("Add Time");
+
+          child: Adw.ButtonContent add_button_content {
+            icon-name: "list-add-symbolic";
+            label: _("Add Time");
+          };
+
+          styles [
+            "suggested-action",
+          ]
+        }
+      }
+
+      Box compact_filter_slot {
+        visible: false;
+      }
+    }
+
+    ScrolledWindow {
+      vexpand: true;
+      hscrollbar-policy: never;
+
+      child: Box {
+        orientation: vertical;
+        margin-start: 16;
+        margin-end: 16;
+        margin-bottom: 16;
+
+        Box table {
+          orientation: vertical;
+
+          styles [
+            "card",
+            "review-table",
+          ]
+        }
+
+        Adw.StatusPage empty_page {
+          visible: false;
+          icon-name: "x-office-calendar-symbolic";
+          title: _("No Time Tracked");
+          description: _("Nothing was tracked this month.");
+
+          styles [
+            "compact",
+          ]
+        }
+      };
+    }
+  };
+}

@@ -1,10 +1,16 @@
+mod entry_dialog;
+mod month_picker;
 mod new_project_dialog;
 mod project_picker;
+mod review_page;
 mod task_picker;
 mod track_page;
 
+pub use entry_dialog::EntryDialog;
+pub use month_picker::MonthPicker;
 pub use new_project_dialog::NewProjectDialog;
 pub use project_picker::ProjectPicker;
+pub use review_page::ReviewPage;
 pub use task_picker::TaskPicker;
 pub use track_page::{TrackPage, set_source_badge};
 

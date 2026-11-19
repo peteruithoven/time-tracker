@@ -57,6 +57,9 @@ pub struct Entry {
     pub end_at: Option<i64>,
     pub duration_secs: Option<i64>,
     pub note: String,
+    pub client_id: i64,
+    pub client_is_remote: bool,
+    pub project_id: Option<i64>,
 }
 
 impl Entry {

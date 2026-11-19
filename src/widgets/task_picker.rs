@@ -67,6 +67,8 @@ mod imp {
         pub target: Cell<Target>,
         /// Reopen after the New Project dialog closes.
         pub reopen: Cell<bool>,
+        /// Only pick a task (e.g. in the entry dialog), never start a timer.
+        pub select_only: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -115,6 +117,20 @@ glib::wrapper! {
 }
 
 impl TaskPicker {
+    /// In select-only mode creating a task just picks it; there is no
+    /// "Start timer" option.
+    pub fn set_select_only(&self, select_only: bool) {
+        let imp = self.imp();
+        imp.select_only.set(select_only);
+        imp.start_check.set_visible(!select_only);
+        self.update_confirm();
+    }
+
+    fn starts_timer(&self) -> bool {
+        let imp = self.imp();
+        !imp.select_only.get() && imp.start_check.is_active()
+    }
+
     pub fn connect_task_chosen<F: Fn(&Self, i64) + 'static>(&self, f: F) -> glib::SignalHandlerId {
         self.connect_local("task-chosen", false, move |args| {
             let picker = args[0].get::<Self>().expect("Emitted by TaskPicker");
@@ -465,7 +481,7 @@ impl TaskPicker {
         let imp = self.imp();
         let has_name = !imp.name_row.text().trim().is_empty();
         imp.confirm_button.set_sensitive(has_name && imp.target.get().client_id != 0);
-        imp.confirm_button.set_label(&if imp.start_check.is_active() {
+        imp.confirm_button.set_label(&if self.starts_timer() {
             gettext("Create & Start")
         } else {
             gettext("Create")
@@ -493,10 +509,13 @@ impl TaskPicker {
         };
         imp.stack.set_visible_child_name("list");
         self.popdown();
-        if imp.start_check.is_active() {
+        if self.starts_timer() {
             self.emit_by_name::<()>("task-chosen", &[&task_id]);
         } else {
             app.data_changed();
+            if imp.select_only.get() {
+                self.emit_by_name::<()>("task-chosen", &[&task_id]);
+            }
         }
     }
 }

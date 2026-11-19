@@ -109,3 +109,71 @@ menubutton.task-button > button:checked {
   min-height: 0;
   font-size: 0.9em;
 }
+
+/* Review table */
+.review-row {
+  min-height: 38px;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid alpha(currentColor, 0.08);
+}
+
+.review-row:last-child {
+  border-bottom: none;
+}
+
+.review-row.header {
+  min-height: 32px;
+  font-size: 0.8em;
+  font-weight: 700;
+  opacity: 0.6;
+}
+
+.review-row.client {
+  background-color: alpha(currentColor, 0.04);
+  font-weight: 700;
+}
+
+.review-row.project {
+  font-weight: 600;
+}
+
+.review-row.total {
+  background-color: alpha(currentColor, 0.04);
+  font-weight: 700;
+  min-height: 42px;
+}
+
+.review-row .no-project label {
+  font-style: italic;
+}
+
+.review-cell {
+  padding: 2px 10px;
+  min-height: 0;
+  font-weight: inherit;
+}
+
+.review-row.task .review-cell:not(:last-child) {
+  opacity: 0.8;
+}
+
+.expander-button {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+}
+
+/* Entries behind a Review cell */
+.entries-popover .entry-button {
+  padding: 6px 8px;
+  font-weight: normal;
+}
+
+.month-button {
+  padding: 6px 4px;
+}
+
+/* Same horizontal padding as .review-cell buttons (incl. their border). */
+.review-header-cell {
+  padding: 0 11px;
+}

@@ -1,0 +1,145 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $EntryDialog: Adw.Dialog {
+  content-width: 380;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-start-title-buttons: false;
+      show-end-title-buttons: false;
+
+      [start]
+      Button cancel_button {
+        label: _("Cancel");
+      }
+
+      [end]
+      Button save_button {
+        sensitive: false;
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    content: Adw.PreferencesPage {
+      Adw.PreferencesGroup {
+        Adw.ActionRow task_row {
+          title: _("Choose a Task");
+          use-markup: false;
+          activatable-widget: task_button;
+
+          [suffix]
+          MenuButton task_button {
+            valign: center;
+            icon-name: "pan-down-symbolic";
+            tooltip-text: _("Choose Task");
+            popover: $TaskPicker task_picker {};
+
+            styles [
+              "flat",
+            ]
+          }
+        }
+
+        Adw.ActionRow date_row {
+          title: _("Date");
+          activatable-widget: date_button;
+
+          [suffix]
+          MenuButton date_button {
+            valign: center;
+
+            popover: Popover date_popover {
+              child: Calendar calendar {};
+            };
+
+            child: Box {
+              spacing: 6;
+
+              Label date_label {}
+
+              Image {
+                icon-name: "x-office-calendar-symbolic";
+              }
+            };
+
+            styles [
+              "flat",
+            ]
+          }
+        }
+      }
+
+      // Its own group: a group places non-row children after its rows.
+      Adw.PreferencesGroup {
+        Adw.ToggleGroup mode_toggle {
+          Adw.Toggle {
+            name: "range";
+            label: _("Start – End");
+          }
+
+          Adw.Toggle {
+            name: "duration";
+            label: _("Duration");
+          }
+        }
+      }
+
+      Adw.PreferencesGroup {
+        Adw.EntryRow start_row {
+          title: _("Start");
+        }
+
+        Adw.EntryRow end_row {
+          title: _("End");
+        }
+
+        Adw.ActionRow running_row {
+          title: _("End");
+          subtitle: _("Still running");
+          visible: false;
+        }
+
+        Adw.EntryRow duration_row {
+          title: _("Duration (e.g. 1:30, 1.5 or 90m)");
+          visible: false;
+        }
+
+        Adw.ActionRow total_row {
+          title: _("Duration");
+
+          [suffix]
+          Label total_label {
+            styles [
+              "dim-label",
+              "numeric",
+            ]
+          }
+        }
+      }
+
+      Adw.PreferencesGroup {
+        Adw.EntryRow note_row {
+          title: _("Note");
+        }
+      }
+
+      Adw.PreferencesGroup delete_group {
+        visible: false;
+
+        Adw.ButtonRow delete_row {
+          title: _("Delete Entry");
+          start-icon-name: "user-trash-symbolic";
+
+          styles [
+            "destructive-action",
+          ]
+        }
+      }
+    };
+  };
+}
