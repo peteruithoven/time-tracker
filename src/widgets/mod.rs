@@ -30,6 +30,17 @@ pub const PROJECT_COLORS: &[&str] = &[
     "blue", "green", "yellow", "orange", "red", "purple", "brown", "slate",
 ];
 
+/// The mark on an entry that waits to be synced.
+pub fn pending_dot() -> gtk::Box {
+    let dot = gtk::Box::builder()
+        .valign(gtk::Align::Center)
+        .css_classes(["sync-dot"])
+        .tooltip_text(gettext("Waiting to sync"))
+        .build();
+    dot.update_property(&[gtk::accessible::Property::Label(&gettext("Waiting to sync"))]);
+    dot
+}
+
 /// A small colored circle for a project; tasks without a project get slate.
 pub fn project_color_dot(color: Option<&str>) -> gtk::Box {
     let dot = gtk::Box::builder()

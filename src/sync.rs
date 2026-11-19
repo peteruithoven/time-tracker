@@ -88,7 +88,10 @@ pub fn refresh_status() {
         return;
     }
     let pending = store.pending_count().unwrap_or(0);
-    set_status(if pending > 0 {
+    // Stay offline until a sync gets through.
+    set_status(if matches!(status(), Status::Offline(_)) {
+        Status::Offline(pending)
+    } else if pending > 0 {
         Status::Pending(pending)
     } else {
         Status::Synced(accounts.iter().filter_map(|a| a.last_sync_at).min())
@@ -217,6 +220,11 @@ async fn run(full: bool) -> Status {
         };
 
         let now = format::now();
+        // Without a connection nothing was applied; reporting a change
+        // would schedule another push right away.
+        if response.pulled.is_some() || response.pushed.iter().any(|r| r.result.is_ok()) {
+            changed = true;
+        }
         if let Err(err) = store.apply_pushes(&response.pushed) {
             error = Some(err.to_string());
         }
@@ -232,9 +240,11 @@ async fn run(full: bool) -> Status {
             Some(err) => error = Some(err.to_string()),
             None => {}
         }
-        let message = sync_error.as_ref().filter(|e| !matches!(e, Error::Network(_))).map(|e| e.to_string());
-        let _ = store.set_account_synced(account.id, now, message.as_deref());
-        changed = true;
+        // Offline isn't a sync: keep the last sync time (and any error).
+        if !matches!(sync_error, Some(Error::Network(_))) {
+            let message = sync_error.as_ref().map(|e| e.to_string());
+            let _ = store.set_account_synced(account.id, now, message.as_deref());
+        }
     }
 
     if changed {
@@ -257,11 +267,7 @@ pub fn describe(status: &Status) -> (String, String) {
     match status {
         Status::Off => (gettext("Not Connected"), String::new()),
         Status::Syncing => (gettext("Syncing…"), String::new()),
-        Status::Synced(at) => (
-            gettext("Synced"),
-            at.map(|ts| gettext("Last synced at {}").replace("{}", &format::clock_time(ts)))
-                .unwrap_or_default(),
-        ),
+        Status::Synced(_) => (gettext("Synced"), gettext("All entries are up to date")),
         Status::Pending(n) => (
             gettextrs::ngettext("{} Entry Waiting to Sync", "{} Entries Waiting to Sync", *n as u32)
                 .replace("{}", &n.to_string()),

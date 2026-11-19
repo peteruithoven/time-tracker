@@ -13,7 +13,7 @@ pub use models::{Account, Client, Entry, Project, Task};
 
 mod sync;
 
-pub use sync::NewAccount;
+pub use sync::{NewAccount, PendingEntry};
 
 pub type Result<T> = rusqlite::Result<T>;
 

@@ -32,14 +32,30 @@ template $TimeTrackerWindow: Adw.ApplicationWindow {
       [end]
       MenuButton sync_button {
         visible: false;
-        icon-name: "emblem-synchronizing-symbolic";
         tooltip-text: _("Sync Status");
 
-        popover: Popover {
+        child: Overlay {
+          Image sync_icon {
+            icon-name: "emblem-synchronizing-symbolic";
+          }
+
+          [overlay]
+          Box sync_dot {
+            visible: false;
+            halign: end;
+            valign: start;
+
+            styles [
+              "sync-dot",
+            ]
+          }
+        };
+
+        popover: Popover sync_popover {
           child: Box {
             orientation: vertical;
             spacing: 6;
-            width-request: 240;
+            width-request: 300;
             margin-top: 6;
             margin-bottom: 6;
             margin-start: 6;
@@ -47,6 +63,7 @@ template $TimeTrackerWindow: Adw.ApplicationWindow {
 
             Label sync_title {
               xalign: 0;
+              wrap: true;
 
               styles [
                 "heading",
@@ -56,17 +73,41 @@ template $TimeTrackerWindow: Adw.ApplicationWindow {
             Label sync_detail {
               xalign: 0;
               wrap: true;
-              max-width-chars: 36;
+              max-width-chars: 40;
 
               styles [
                 "dim-label",
               ]
             }
 
-            Button sync_now_button {
-              label: _("Sync Now");
-              halign: end;
+            ListBox sync_list {
+              selection-mode: none;
               margin-top: 6;
+
+              styles [
+                "boxed-list",
+              ]
+            }
+
+            Box {
+              spacing: 12;
+              margin-top: 6;
+
+              Label sync_last {
+                xalign: 0;
+                hexpand: true;
+                wrap: true;
+
+                styles [
+                  "dim-label",
+                  "caption",
+                ]
+              }
+
+              Button sync_now_button {
+                label: _("Sync Now");
+                valign: center;
+              }
             }
           };
         };

@@ -126,14 +126,33 @@ impl Store {
 
     /// Entries of connected clients changed locally and not pushed yet.
     pub fn pending_count(&self) -> Result<i64> {
-        self.conn.query_row(
-            "SELECT COUNT(*) FROM entries e
-             JOIN tasks t ON t.id = e.task_id
-             JOIN accounts a ON a.client_id = t.client_id
-             WHERE e.dirty = 1 AND NOT (e.start_at IS NOT NULL AND e.end_at IS NULL AND a.mirror_timer = 0)",
-            [],
-            |row| row.get(0),
-        )
+        self.conn.query_row(&format!("SELECT COUNT(*) {PENDING_FROM}"), [], |row| row.get(0))
+    }
+
+    /// The entries `pending_count` counts, newest first (deleted ones too).
+    pub fn pending_entries(&self) -> Result<Vec<PendingEntry>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT e.id, t.name, e.date, e.start_at, e.end_at, e.duration_secs, e.deleted {PENDING_FROM}
+             ORDER BY COALESCE(e.start_at, e.created_at) DESC"
+        ))?;
+        stmt.query_map([], |r| {
+            Ok(PendingEntry {
+                id: r.get(0)?,
+                task_name: r.get(1)?,
+                date: r.get(2)?,
+                start_at: r.get(3)?,
+                end_at: r.get(4)?,
+                duration_secs: r.get(5)?,
+                deleted: r.get(6)?,
+            })
+        })?
+        .collect()
+    }
+
+    /// Ids of the entries waiting to sync, to mark them in lists.
+    pub fn pending_entry_ids(&self) -> Result<HashSet<i64>> {
+        let mut stmt = self.conn.prepare(&format!("SELECT e.id {PENDING_FROM}"))?;
+        stmt.query_map([], |r| r.get(0))?.collect()
     }
 
     /// Local changes for `account` to send: new tasks first, then entries.
@@ -308,6 +327,26 @@ impl Store {
         drop(stmt);
         tx.commit()
     }
+}
+
+/// Entries waiting to be pushed: changed locally, of a connected client.
+/// A running timer only counts when it's mirrored.
+const PENDING_FROM: &str = "FROM entries e
+     JOIN tasks t ON t.id = e.task_id
+     JOIN accounts a ON a.client_id = t.client_id
+     WHERE e.dirty = 1 AND NOT (e.start_at IS NOT NULL AND e.end_at IS NULL AND a.mirror_timer = 0)";
+
+/// An entry waiting to sync, as listed in the sync popover.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingEntry {
+    pub id: i64,
+    pub task_name: String,
+    pub date: String,
+    pub start_at: Option<i64>,
+    pub end_at: Option<i64>,
+    pub duration_secs: Option<i64>,
+    /// Deleted locally, to be deleted in Fibery.
+    pub deleted: bool,
 }
 
 /// id, dirty, remote_modified, start_at, end_at
@@ -580,6 +619,9 @@ mod tests {
 
         let pushes = store.pending_pushes(&account).unwrap();
         assert_eq!(pushes.len(), 2, "the local-only task's entry is not pushed");
+        let waiting = store.pending_entries().unwrap();
+        assert_eq!(waiting.len() as i64, store.pending_count().unwrap());
+        assert_eq!(store.pending_entry_ids().unwrap(), HashSet::from([new, synced]));
         assert!(pushes.iter().any(
             |p| matches!(p, Push::CreateLog { local_id, fields, .. } if *local_id == new && fields.hours == 1.0)
         ));

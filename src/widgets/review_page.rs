@@ -789,6 +789,7 @@ fn entries_popover(
     content.append(&header);
 
     let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let pending = TimeTrackerApplication::get().store().pending_entry_ids().unwrap_or_default();
     let mut day = String::new();
     for entry in entries {
         if entry.date != day {
@@ -811,7 +812,7 @@ fn entries_popover(
             );
             list.append(&day_row);
         }
-        list.append(&entry_button(page, entry, is_task, now));
+        list.append(&entry_button(page, entry, is_task, pending.contains(&entry.id), now));
     }
     if entries.is_empty() {
         list.append(
@@ -834,7 +835,7 @@ fn entries_popover(
     gtk::Popover::builder().child(&content).build()
 }
 
-fn entry_button(page: &ReviewPage, entry: &Entry, is_task: bool, now: i64) -> gtk::Button {
+fn entry_button(page: &ReviewPage, entry: &Entry, is_task: bool, pending: bool, now: i64) -> gtk::Button {
     let times = match (entry.start_at, entry.end_at) {
         (Some(start), Some(end)) => format!("{} – {}", format::clock_time(start), format::clock_time(end)),
         (Some(start), None) => format!("{} – {}", format::clock_time(start), gettext("now")),
@@ -877,6 +878,9 @@ fn entry_button(page: &ReviewPage, entry: &Entry, is_task: bool, now: i64) -> gt
         .build();
     if entry.is_running() {
         duration.add_css_class("running-duration");
+    }
+    if pending {
+        row.append(&crate::widgets::pending_dot());
     }
     row.append(&duration);
     row.append(&gtk::Image::from_icon_name("go-next-symbolic"));

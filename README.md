@@ -35,7 +35,7 @@ The app finds the task, project and time log databases and their fields by itsel
 
 Hours are sent with two decimals, like Fibery's own timer. Totals in the app use the same rounding, so they match Fibery.
 
-**When:** a full sync at startup, every 5 minutes, when the network comes back and with Sync Now (header bar). Local changes are pushed a few seconds after you make them. Without a connection everything keeps working and syncs later.
+**When:** a full sync at startup, every 5 minutes, when the network comes back and with Sync Now (header bar). Local changes are pushed a few seconds after you make them. Without a connection everything keeps working and syncs later. The sync button in the header bar shows the state, with a dot while entries wait to be sent; its popover lists them, and they're marked in Today and Review too.
 
 **Conflicts:** Fibery wins. If a time log changed in Fibery while a local edit of it was still waiting to be pushed, the Fibery version replaces the local one. Local edits that were pushed are never overwritten by older data.
 

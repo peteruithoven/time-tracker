@@ -45,6 +45,8 @@ mod imp {
         pub running: RefCell<Option<Entry>>,
         pub current_task: RefCell<Option<Task>>,
         pub today: RefCell<Vec<Entry>>,
+        /// Ids of today's entries waiting to sync.
+        pub pending: RefCell<std::collections::HashSet<i64>>,
         pub today_date: RefCell<String>,
         pub running_duration_label: RefCell<Option<gtk::Label>>,
         pub tick_source: RefCell<Option<glib::SourceId>>,
@@ -182,6 +184,7 @@ impl TrackPage {
         imp.running.replace(running);
         imp.current_task.replace(task);
         imp.today.replace(entries);
+        imp.pending.replace(store.pending_entry_ids().unwrap_or_default());
 
         self.update_timer();
         self.update_task_button();
@@ -289,6 +292,9 @@ impl TrackPage {
         ));
         row.add_prefix(&project_color_dot(entry.color.as_deref()));
 
+        if self.imp().pending.borrow().contains(&entry.id) {
+            row.add_suffix(&crate::widgets::pending_dot());
+        }
         let duration = gtk::Label::new(Some(&format::hm(entry.duration(now))));
         duration.add_css_class("numeric");
         row.add_suffix(&duration);
