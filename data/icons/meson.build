@@ -1,5 +1,6 @@
+# Development builds have their own icon, with GNOME's nightly stripes.
 install_data(
-  'hicolor/scalable/apps/@0@.svg'.format(base_id),
+  'hicolor/scalable/apps/@0@.svg'.format(application_id),
   install_dir: iconsdir / 'hicolor' / 'scalable' / 'apps',
   rename: '@0@.svg'.format(application_id),
 )

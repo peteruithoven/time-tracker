@@ -73,7 +73,7 @@ Install the runtime, SDK and Rust extension once:
 flatpak install --user flathub org.gnome.Platform//51 org.gnome.Sdk//51 org.freedesktop.Sdk.Extension.rust-stable//26.08
 ```
 
-Build and install the development version (app ID `nl.peteruithoven.TimeTracker.Devel`, striped headerbar). Run this from the repository root:
+Build and install the development version (app ID `nl.peteruithoven.TimeTracker.Devel`, with a striped header bar and GNOME's striped nightly icon). Run this from the repository root:
 
 ```bash
 flatpak-builder --user --install --force-clean build-dir build-aux/nl.peteruithoven.TimeTracker.Devel.json
