@@ -47,7 +47,7 @@ An invoice script creates a month's invoice for a client in an invoicing service
 
 Scripts keep account details out of the code. Rates come from the client and project settings, other details (such as a template invoice) from the script's settings, and API tokens from the keyring.
 
-The included **Avec Sans Moneybird invoice** creates a draft sales invoice in [Moneybird](https://www.moneybird.com) with a line per project, billed in days (8 hours, at the hourly rate × 8). It copies the contact, contact person, VAT and layout from an earlier invoice whose address you paste in the settings, and opens the draft in your browser for final tweaks.
+The included **Moneybird invoice** creates a draft sales invoice in [Moneybird](https://www.moneybird.com) with a line per project, billed in days (8 hours, at the hourly rate × 8). It copies the contact, contact person, VAT and layout from an earlier invoice whose address you paste in the settings, and opens the draft in your browser for final tweaks.
 
 ## Keyboard shortcuts
 

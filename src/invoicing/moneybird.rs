@@ -28,8 +28,8 @@ const COPIED_FIELDS: &[&str] = &[
 ];
 
 pub const SCRIPT: Script = Script {
-    id: "avec-sans-moneybird",
-    name: "Avec Sans Moneybird invoice",
+    id: "moneybird",
+    name: "Moneybird invoice",
     help: "Creates a draft in Moneybird with a line per project in days (hourly rate × 8), copying the contact and VAT from an earlier invoice. \
            Create a personal API token at moneybird.com/user/applications/new with access to sales invoices.",
     settings: &[SettingField { key: TEMPLATE_URL, title: "Template Invoice Address" }],

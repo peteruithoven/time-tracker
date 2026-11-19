@@ -109,6 +109,10 @@ ALTER TABLE clients ADD COLUMN invoice_script TEXT;
 "#, r#"
 -- Settings of the invoice script (JSON), e.g. a template invoice address.
 ALTER TABLE clients ADD COLUMN invoice_settings TEXT;
+"#, r#"
+-- Earlier ids of the Moneybird invoice script.
+UPDATE clients SET invoice_script = 'moneybird'
+WHERE invoice_script LIKE '%-moneybird';
 "#];
 
 const TASK_SELECT: &str = "
@@ -595,6 +599,24 @@ mod tests {
         assert_eq!(clients.len(), 1);
         assert_eq!(clients[0].name, "Personal");
         assert!(!clients[0].billable);
+    }
+
+    #[test]
+    fn renames_earlier_moneybird_script_ids() {
+        let path = std::env::temp_dir().join(format!("time-tracker-test-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            let store = Store::open(&path, "Personal").unwrap();
+            let client = store.clients().unwrap()[0].id;
+            store.set_client_invoice_script(client, Some("old-moneybird"), Some("{}")).unwrap();
+            store.conn.pragma_update(None, "user_version", 4).unwrap();
+        }
+        let store = Store::open(&path, "Personal").unwrap();
+        let client = &store.clients().unwrap()[0];
+        assert_eq!(client.invoice_script.as_deref(), Some("moneybird"));
+        assert_eq!(client.invoice_settings.as_deref(), Some("{}"));
+        drop(store);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

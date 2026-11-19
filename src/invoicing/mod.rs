@@ -5,7 +5,7 @@
 //! from the client and project settings, other details from the script's
 //! settings, and the API token from the keyring.
 
-mod avec_sans_moneybird;
+mod moneybird;
 
 use std::collections::BTreeMap;
 
@@ -53,7 +53,7 @@ pub struct Request {
     pub projects: Vec<ProjectHours>,
 }
 
-pub const SCRIPTS: &[Script] = &[avec_sans_moneybird::SCRIPT];
+pub const SCRIPTS: &[Script] = &[moneybird::SCRIPT];
 
 pub fn find(id: &str) -> Option<&'static Script> {
     SCRIPTS.iter().find(|s| s.id == id)

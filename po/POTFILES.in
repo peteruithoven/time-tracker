@@ -2,7 +2,7 @@ data/nl.peteruithoven.TimeTracker.desktop.in.in
 data/nl.peteruithoven.TimeTracker.metainfo.xml.in.in
 data/nl.peteruithoven.TimeTracker.gschema.xml.in
 src/application.rs
-src/invoicing/avec_sans_moneybird.rs
+src/invoicing/moneybird.rs
 src/keyboard_shortcuts.blp
 src/main.rs
 src/sync.rs

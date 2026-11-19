@@ -71,10 +71,42 @@ pub async fn store_invoice_token(script: &str, client_id: i64, label: &str, toke
 
 pub async fn load_invoice_token(script: &str, client_id: i64) -> Result<Option<String>, String> {
     let client = client_id.to_string();
-    libsecret::password_lookup_future(Some(&invoice_schema()), invoice_attributes(script, &client))
+    let token = libsecret::password_lookup_future(Some(&invoice_schema()), invoice_attributes(script, &client))
         .await
         .map(|token| token.map(|t| t.to_string()))
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    match token {
+        Some(token) => Ok(Some(token)),
+        None => adopt_renamed_invoice_token(script, client_id).await,
+    }
+}
+
+/// A client has one invoice script, so a token of the client stored under
+/// another script id is from before that script was renamed: it moves to
+/// `script`.
+async fn adopt_renamed_invoice_token(script: &str, client_id: i64) -> Result<Option<String>, String> {
+    use libsecret::prelude::*;
+
+    let client = client_id.to_string();
+    let items = libsecret::password_search_future(
+        Some(&invoice_schema()),
+        HashMap::from([("client", client.as_str())]),
+        libsecret::SearchFlags::UNLOCK,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(item) = items.into_iter().find(|i| i.attributes().get("script").is_some_and(|s| s != script)) else {
+        return Ok(None);
+    };
+    let old_script = item.attributes().get("script").cloned().unwrap_or_default();
+    let secret = item.retrieve_secret_future().await.map_err(|e| e.to_string())?;
+    let Some(token) = secret.and_then(|s| s.text()).map(|t| t.to_string()) else {
+        return Ok(None);
+    };
+    let label = crate::invoicing::find(script).map_or(script, |s| s.name);
+    store_invoice_token(script, client_id, label, &token).await?;
+    delete_invoice_token(&old_script, client_id).await?;
+    Ok(Some(token))
 }
 
 pub async fn delete_invoice_token(script: &str, client_id: i64) -> Result<(), String> {
