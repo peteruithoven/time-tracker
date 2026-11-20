@@ -47,7 +47,7 @@ mod imp {
             gtk::Window::set_default_icon_name(APP_ID);
             crate::screenshot::configure();
 
-            let data_dir = glib::user_data_dir().join("time-tracker");
+            let data_dir = super::data_dir();
             std::fs::create_dir_all(&data_dir).expect("Could not create the data directory");
             let store = Store::open(&data_dir.join("time-tracker.db"), &gettext("Personal"))
                 .expect("Could not open the database");
@@ -63,6 +63,7 @@ mod imp {
             app.setup_accels();
             crate::sync::start();
             if !crate::screenshot::enabled() {
+                crate::backup::start();
                 crate::launcher::start();
                 let monitor = crate::idle::Monitor::start(|away| {
                     let app = super::TimeTrackerApplication::get();
@@ -93,6 +94,11 @@ glib::wrapper! {
     pub struct TimeTrackerApplication(ObjectSubclass<imp::TimeTrackerApplication>)
         @extends gio::Application, gtk::Application, adw::Application,
         @implements gio::ActionGroup, gio::ActionMap;
+}
+
+/// The app's own data folder, holding the database (and default backups).
+pub fn data_dir() -> std::path::PathBuf {
+    glib::user_data_dir().join("time-tracker")
 }
 
 impl TimeTrackerApplication {

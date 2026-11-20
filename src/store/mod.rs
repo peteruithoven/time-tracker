@@ -156,6 +156,11 @@ impl Store {
         Self::init(Connection::open(path)?, default_client)
     }
 
+    /// The database file, unless it's in memory.
+    pub fn path(&self) -> Option<std::path::PathBuf> {
+        self.conn.path().filter(|p| !p.is_empty()).map(std::path::PathBuf::from)
+    }
+
     #[cfg(test)]
     pub fn open_in_memory() -> Result<Self> {
         Self::init(Connection::open_in_memory()?, "Personal")

@@ -16,7 +16,7 @@ Built with Rust, GTK 4 and libadwaita, packaged as a Flatpak.
 - **Review:** a month per client › project › task with a column per week. Click any number to see, edit or add the entries behind it.
 - **Clients & Projects:** hourly rates (per client, optionally per project), billable or not, archiving, marking tasks done.
 - **Export:** a month's entries as CSV (Ctrl+E).
-- **Fibery sync** and **invoice scripts**, see below.
+- **Fibery sync**, **backups** and **invoice scripts**, see below.
 - Light and dark style, adaptive down to a 360 px wide window.
 
 ## Fibery
@@ -39,6 +39,18 @@ Hours are sent with two decimals, like Fibery's own timer. Totals in the app use
 **When:** a full sync at startup, every 5 minutes, when the network comes back and with Sync Now (header bar). Local changes are pushed a few seconds after you make them. Without a connection everything keeps working and syncs later. The sync button in the header bar shows the state, with a dot while entries wait to be sent; its popover lists them, and they're marked in Today and Review too.
 
 **Conflicts:** Fibery wins. If a time log changed in Fibery while a local edit of it was still waiting to be pushed, the Fibery version replaces the local one. Local edits that were pushed are never overwritten by older data.
+
+## Backups
+
+The app saves a snapshot of its database every day it runs, and right before a sync removes entries (or when you change a client's Time Logs settings). A snapshot is a complete copy of the SQLite database without API keys, as one file you can open with any SQLite tool.
+
+**Which ones are kept:** the newest snapshot of each of the last 7 days that have one, of each of the last 4 weeks (Monday to Sunday) and of each of the last 12 months. Snapshots taken before a sync are kept for 30 days, at most the 20 newest.
+
+**Where:** by default in `backups/` next to the database (`~/.var/app/nl.peteruithoven.TimeTracker/data/time-tracker/backups/`), which `flatpak uninstall --delete-data` removes too. In Preferences → Backups you can choose another folder, for example one that Nextcloud syncs. If that folder isn't there (an unmounted drive), snapshots go to the default folder until it's back.
+
+Files are named `time-tracker-<computer>-<date>-<time>.db` (`time-tracker-devel-…` for the development build, `…-before-sync.db` for the extra ones), so several computers can share one folder: each only ever removes its own snapshots, and nothing else in the folder. Preferences warns when the chosen folder has other files and offers to use a subfolder instead. Snapshots are written as `….db.part` and renamed when complete, so sync clients never upload half a file.
+
+To restore one, quit the app and copy the snapshot over `time-tracker.db` (and remove `time-tracker.db-wal` and `time-tracker.db-shm` next to it). Synced entries that no longer exist in Fibery are removed again on the next sync, after a pause to review; restoring those into Fibery isn't built in yet.
 
 **The API key** is stored in your system keyring (through the Secret portal). If no keyring is available, it's kept in the app's own database instead and every sync tries to move it to the keyring; the client page says where it's stored. Disconnecting removes the key and keeps the synced data in the app; nothing is removed from Fibery.
 

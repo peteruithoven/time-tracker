@@ -41,6 +41,8 @@ then runs the app on a virtual X display (`:99`) with demo data in
   sending keyboard shortcuts.
 - `ui-test.sh stop` stops only what `start` started.
 - `TIME_TRACKER_DEBUG_AWAY=<minutes>` simulates an absence (idle alert).
+- The test instance writes snapshots to `data/time-tracker/backups/` in its
+  own folder (its GSettings are separate too), never to Peter's folder.
 
 Don't use GTK's Broadway backend (its server crashes on popovers).
 
@@ -77,6 +79,11 @@ enters them. Delete screenshots of his real screen after use.
 - **Fibery:** commands API with parameters (`"$name"`), 3 requests per second.
   The real workspace may be read with the Fibery tools for checking query
   syntax; don't write to it unless Peter asks, and clean up test entities.
+- **Folders chosen through the portal** appear as
+  `/run/user/1000/doc/<id>/<name>` in the sandbox, and stay accessible after
+  restarts. Peter's xdg-desktop-portal (1.18, Documents portal version 4)
+  can't tell the real location (no `GetHostPaths`, no host-path xattr), so
+  Preferences shows only the folder's name there.
 - **gitlab.gnome.org** refuses automated page fetches; `git clone --depth 1`
   works for reading GNOME source.
 

@@ -30,6 +30,13 @@ impl Editor {
     }
 
     fn update(&self, change: impl FnOnce(&mut Mapping)) {
+        // A different mapping can make the next pull look very different:
+        // keep a copy of the data from before the first change.
+        if !self.changed.get() {
+            glib::spawn_future_local(async {
+                let _ = crate::backup::snapshot(crate::backup::Kind::BeforeSync).await;
+            });
+        }
         change(&mut self.mapping.borrow_mut());
         let json = serde_json::to_string(&*self.mapping.borrow()).unwrap_or_default();
         let app = TimeTrackerApplication::get();
