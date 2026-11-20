@@ -430,7 +430,7 @@ impl Store {
         for id in stale {
             self.conn.execute("UPDATE tasks SET done = 1 WHERE id = ?1", [id])?;
         }
-        let mut seen = HashSet::new();
+        let mut seen: HashSet<String> = pulled.unreadable.iter().cloned().collect();
         for log in &pulled.logs {
             seen.insert(log.id.clone());
             sync.merge_log(log)?;
@@ -484,8 +484,8 @@ pub struct PendingEntry {
     pub deleted: bool,
 }
 
-/// id, dirty, remote_modified, start_at, end_at
-type LocalEntry = (i64, bool, Option<String>, Option<i64>, Option<i64>);
+/// id, dirty, remote_modified, start_at, end_at, duration_secs
+type LocalEntry = (i64, bool, Option<String>, Option<i64>, Option<i64>, Option<i64>);
 
 struct Sync<'a> {
     store: &'a Store,
@@ -576,23 +576,34 @@ impl Sync<'_> {
     fn merge_log(&self, log: &RemoteLog) -> Result<()> {
         let conn = &self.store.conn;
         let task_id = self.ensure_task(&log.task, false)?;
-        let running_remotely = log.start.is_some() && log.end.is_none() && log.hours == 0.0;
+        let running_remotely = log.start.is_some() && log.end.is_none() && log.hours.unwrap_or(0.0) == 0.0;
+        let local: Option<LocalEntry> = conn
+            .query_row(
+                "SELECT id, dirty, remote_modified, start_at, end_at, duration_secs FROM entries WHERE remote_id = ?1",
+                [&log.id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            )
+            .optional()?;
+        // Hours that read as empty (e.g. a field that changed) keep the
+        // duration known here rather than becoming 0.
+        let known_secs = local.as_ref().map(|&(_, _, _, start, end, duration)| match (start, end) {
+            (Some(start), Some(end)) => end - start,
+            _ => duration.unwrap_or_default(),
+        });
         let (start, end, duration) = match (log.start, log.end) {
             (Some(start), Some(end)) => (Some(start), Some(end), None),
             (Some(start), None) if running_remotely => (Some(start), None, None),
-            _ => (None, None, Some((log.hours * 3600.0).round() as i64)),
+            _ => {
+                let secs = match log.hours {
+                    Some(hours) => (hours * 3600.0).round() as i64,
+                    None => known_secs.unwrap_or_default(),
+                };
+                (None, None, Some(secs))
+            }
         };
 
-        let local: Option<LocalEntry> = conn
-            .query_row(
-                "SELECT id, dirty, remote_modified, start_at, end_at FROM entries WHERE remote_id = ?1",
-                [&log.id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-            )
-            .optional()?;
-
         match local {
-            Some((id, dirty, modified, local_start, local_end)) => {
+            Some((id, dirty, modified, local_start, local_end, _)) => {
                 let running_locally = local_start.is_some() && local_end.is_none();
                 let unpushed_change = dirty && modified.as_deref() == Some(log.modified.as_str());
                 if running_locally || unpushed_change || running_remotely {
@@ -677,7 +688,7 @@ mod tests {
             // As pulled: a log's task is only offered if it's in the task list.
             task: RemoteTask { hidden: true, ..remote_task(task) },
             date: date.into(),
-            hours: 1.5,
+            hours: Some(1.5),
             start: None,
             end: None,
             note: "Remote".into(),
@@ -690,6 +701,7 @@ mod tests {
             projects: vec![RemoteProject { id: "p1".into(), name: "Website relaunch".into(), archived: false }],
             tasks: vec![remote_task("t1")],
             logs,
+            unreadable: Vec::new(),
             since: "2026-11-01".into(),
         }
     }
@@ -836,7 +848,7 @@ mod tests {
         let mut logs = eight_logs();
         logs.remove(0); // l1 deleted in Fibery
         logs[0].task = RemoteTask { hidden: true, ..remote_task("t2") }; // l2 on another task
-        logs[1].hours = 0.0; // l3's hours now read as 0
+        logs[1].hours = Some(0.0); // l3's hours now read as 0
         logs[2].note = "Only the note changed".into(); // l4: not a change
         logs.push(log("l9", "t1", "2026-11-20", "m1")); // added
         let next = pulled(logs);
@@ -907,6 +919,21 @@ mod tests {
         assert_eq!(approved.approved(), Some(impact));
         store.clear_approved_pull(account.id).unwrap();
         assert_eq!(store.account_for_client(account.client_id).unwrap().unwrap().approved(), None);
+    }
+
+    #[test]
+    fn unreadable_logs_are_not_deleted_and_empty_hours_keep_the_duration() {
+        let (store, account) = connected();
+        store.apply_pull(&account, &pulled(eight_logs()), 200).unwrap();
+        let mut logs = eight_logs();
+        logs.remove(0); // l1 came back without a task: unreadable
+        logs[0].hours = None; // l2's hours field reads as empty
+        let next = Pulled { unreadable: vec!["l1".into()], ..pulled(logs) };
+        let (impact, _) = store.apply_pull_checked(&account, &next, 300, |_| true).unwrap();
+        assert!(impact.is_empty(), "{impact:?}");
+        let entries = store.entries_between("2026-11-01", "2026-11-30").unwrap();
+        assert_eq!(entries.len(), 8);
+        assert!(entries.iter().all(|e| e.duration(0) == 5_400));
     }
 
 }

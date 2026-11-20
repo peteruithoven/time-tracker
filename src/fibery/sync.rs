@@ -61,7 +61,8 @@ pub struct RemoteLog {
     pub id: String,
     pub task: RemoteTask,
     pub date: String,
-    pub hours: f64,
+    /// `None` when the field is empty (or not a number).
+    pub hours: Option<f64>,
     pub start: Option<i64>,
     pub end: Option<i64>,
     pub note: String,
@@ -82,6 +83,9 @@ pub struct Pulled {
     pub projects: Vec<RemoteProject>,
     pub tasks: Vec<RemoteTask>,
     pub logs: Vec<RemoteLog>,
+    /// Logs that came back without a task or date. They aren't applied,
+    /// but aren't treated as deleted either.
+    pub unreadable: Vec<String>,
     pub since: String,
 }
 
@@ -392,8 +396,16 @@ fn pull(client: &Client, m: &Mapping, user_id: &str, since: &str) -> Result<Pull
         )?;
         let count = rows.len();
         for row in rows {
-            let Some(log) = log_from(&row) else { continue };
-            pulled.logs.push(log);
+            match log_from(&row) {
+                Some(log) => pulled.logs.push(log),
+                None => match row["id"].as_str() {
+                    Some(id) => {
+                        gtk::glib::g_warning!("time-tracker", "Fibery time log {id} has no task or date; left as it is");
+                        pulled.unreadable.push(id.to_string());
+                    }
+                    None => gtk::glib::g_warning!("time-tracker", "Fibery returned a time log without id"),
+                },
+            }
         }
         if count < 500 {
             break;
@@ -429,12 +441,9 @@ fn log_from(row: &Value) -> Option<RemoteLog> {
     })
 }
 
-/// Fibery returns decimals as numbers or strings.
-fn number(value: &Value) -> f64 {
-    value
-        .as_f64()
-        .or_else(|| value.as_str().and_then(|s| s.parse().ok()))
-        .unwrap_or(0.0)
+/// Fibery returns decimals as numbers or strings; `None` when empty.
+fn number(value: &Value) -> Option<f64> {
+    value.as_f64().or_else(|| value.as_str().and_then(|s| s.parse().ok()))
 }
 
 #[cfg(test)]
@@ -466,7 +475,7 @@ mod tests {
             "start": "2026-11-19T13:32:14.570Z", "end": "2026-11-19T13:33:23.217Z"
         });
         let log = log_from(&row).unwrap();
-        assert_eq!(log.hours, 0.02);
+        assert_eq!(log.hours, Some(0.02));
         assert_eq!(log.task.project.as_ref().unwrap().name, "Website relaunch");
         assert_eq!(log.end.unwrap() - log.start.unwrap(), 69);
         assert_eq!(log.note, "");
