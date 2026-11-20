@@ -62,6 +62,7 @@ mod imp {
             app.setup_actions();
             app.setup_accels();
             crate::sync::start();
+            crate::watchdog::start();
             if !crate::screenshot::enabled() {
                 crate::backup::start();
                 crate::launcher::start();

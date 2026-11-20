@@ -163,6 +163,14 @@ impl Store {
         Self::init(Connection::open(path)?, default_client)
     }
 
+    /// Runs `f` in one transaction (for many writes at once, e.g. demo data).
+    pub fn batch<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+        let tx = self.conn.unchecked_transaction()?;
+        let result = f()?;
+        tx.commit()?;
+        Ok(result)
+    }
+
     /// The database file, unless it's in memory.
     pub fn path(&self) -> Option<std::path::PathBuf> {
         self.conn.path().filter(|p| !p.is_empty()).map(std::path::PathBuf::from)

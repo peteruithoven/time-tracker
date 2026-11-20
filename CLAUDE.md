@@ -18,6 +18,7 @@ Everything builds inside the GNOME SDK (the host's rustc is too old):
 | Install the Devel Flatpak | `flatpak-builder --user --install --force-clean build-dir build-aux/nl.peteruithoven.TimeTracker.Devel.json` | 1–2 min |
 | Install the regular Flatpak | `flatpak-builder --user --install --force-clean build-dir-release build-aux/nl.peteruithoven.TimeTracker.json` | 1–2 min |
 | Store screenshots | `build-aux/screenshots.sh` (uses the installed Devel Flatpak) | ~30 s |
+| Timing of the sync's store work | `build-aux/cargo-sdk.sh test --release -- --ignored --nocapture` | ~1.5 min |
 
 Use the fast build and `ui-test.sh` while working. Install the Flatpaks only
 when Peter should try something, and say which one (he uses the regular
@@ -33,7 +34,16 @@ then runs the app on a virtual X display (`:99`) with demo data in
   `preferences` or `shortcuts`; prefer it over clicking.
 - `--fibery` connects the demo client "Acme Studio" to
   `build-aux/fibery-mock.py`; its requests are logged in `fibery.log`.
-- `ui-test.sh shot FILE.png` captures just the window. Keep screenshots few
+  Make Fibery data go wrong with a scenario, e.g.
+  `curl -d '{"scenario":"delete-logs","count":6}' 127.0.0.1:8099/mock`
+  (list at the top of the mock; `reset` undoes them).
+- `--large` adds five years of demo history and 2,000 mock logs, and logs
+  main loop stalls over 50 ms (`TIME_TRACKER_DEBUG_STALLS`) plus sync and
+  snapshot timings (`G_MESSAGES_DEBUG=time-tracker`) to `app.log`. The
+  `_sdk` build is a debug build: roughly 4–10× slower than release.
+- `ui-test.sh shot FILE.png` captures just the window; popovers are
+  separate X windows, so for those use
+  `DISPLAY=:99 import -window root -crop 420x520+0+0 FILE.png`. Keep screenshots few
   and small: they cost far more tokens than text. Check data in the
   database with `sqlite3 ~/.cache/time-tracker-ui-test/data/time-tracker/time-tracker.db`.
 - Interact with `DISPLAY=:99 xdotool …`; there's no window manager, so

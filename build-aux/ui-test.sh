@@ -5,8 +5,10 @@
 # keyring and running apps are never touched: the app gets its own session
 # bus, and `stop` only stops what `start` started.
 #
-#   build-aux/ui-test.sh start [--fibery] [--open PAGE] [--size WxH]
+#   build-aux/ui-test.sh start [--fibery] [--large] [--open PAGE] [--size WxH]
 #       --fibery     connect the demo client to build-aux/fibery-mock.py
+#       --large      five years of demo history, and 2,000 time logs in the
+#                    mock; logs main loop stalls and sync/snapshot timings
 #       --open PAGE  open a page: review, clients, client:<name>,
 #                    preferences or shortcuts
 #       --size WxH   window size, e.g. 960x640 (default 360x560)
@@ -48,11 +50,13 @@ case "${1:-}" in
 start)
   shift
   fibery=""
+  large=""
   open=""
   size=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --fibery) fibery=1 ;;
+      --large) large=1 ;;
       --open) open="$2"; shift ;;
       --size) size="$2"; shift ;;
       *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -73,7 +77,7 @@ start)
 
   demo_fibery=""
   if [ -n "$fibery" ]; then
-    python3 "$repo/build-aux/fibery-mock.py" 8099 >"$state/fibery.log" 2>&1 &
+    python3 "$repo/build-aux/fibery-mock.py" 8099 ${large:+--seed-logs 2000} >"$state/fibery.log" 2>&1 &
     echo $! >"$state/fibery.pid"
     demo_fibery="http://127.0.0.1:8099"
   fi
@@ -87,6 +91,9 @@ start)
     --env=GSETTINGS_BACKEND=keyfile \
     --env=TIME_TRACKER_DEMO=1 --env=TIME_TRACKER_DEMO_FIBERY="$demo_fibery" \
     --env=TIME_TRACKER_OPEN="$open" \
+    --env=TIME_TRACKER_DEMO_SIZE="${large:+large}" \
+    --env=TIME_TRACKER_DEBUG_STALLS="${large:+1}" \
+    --env=G_MESSAGES_DEBUG="${large:+time-tracker}" \
     --command=sh org.gnome.Sdk//51 -c "
       export XDG_DATA_HOME='$state/data' XDG_CONFIG_HOME='$state/config'
       export GSETTINGS_SCHEMA_DIR='$prefix/share/glib-2.0/schemas'

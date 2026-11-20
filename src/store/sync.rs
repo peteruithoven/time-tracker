@@ -936,4 +936,64 @@ mod tests {
         assert!(entries.iter().all(|e| e.duration(0) == 5_400));
     }
 
+    /// Times applying a pull the old way and with the impact check, on a
+    /// database file with 2,000 synced and 8,000 local entries.
+    #[test]
+    #[ignore = "timing; run with: build-aux/cargo-sdk.sh test --release -- --ignored --nocapture"]
+    fn times_pull_checks_on_a_large_database() {
+        use std::time::Instant;
+        let path = std::env::temp_dir().join(format!("time-tracker-timing-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let store = Store::open(&path, "Personal").unwrap();
+        let client = store.create_client("Acme", 0).unwrap();
+        let new = NewAccount { client_id: client, service: "fibery", workspace: "https://acme.fibery.io", user_id: "me", user_name: "Demo", mapping: "{}" };
+        store.add_account(&new, 0).unwrap();
+        let account = store.account_for_client(client).unwrap().unwrap();
+        let local_client = store.clients().unwrap().iter().find(|c| c.source.is_none()).unwrap().id;
+        let local_task = store.create_task(local_client, None, "Mine", 0).unwrap();
+        store
+            .batch(|| {
+                for i in 0..8_000 {
+                    let date = format!("20{:02}-{:02}-{:02}", 21 + i / 2_000, 1 + (i / 160) % 12, 1 + (i / 8) % 28);
+                    let input = EntryInput { task_id: local_task, date, start_at: None, end_at: None, duration_secs: Some(3_600), note: String::new() };
+                    store.add_entry(&input, 0)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        // A year of logs, about 5 a day; the last two months is what later syncs pull.
+        let start = gtk::glib::DateTime::from_utc(2025, 11, 20, 12, 0, 0.0).unwrap();
+        let date = |i: usize| start.add_days((i * 365 / 2_000) as i32).unwrap().format("%Y-%m-%d").unwrap().to_string();
+        let logs: Vec<RemoteLog> = (0..2_000).map(|i| log(&format!("l{i}"), "t1", &date(i), "m1")).collect();
+        let year = Pulled { since: "2025-01-01".into(), ..pulled(logs.clone()) };
+        let started = Instant::now();
+        store.apply_pull(&account, &year, 100).unwrap();
+        println!("first sync, {} logs: {} ms", year.logs.len(), started.elapsed().as_millis());
+
+        let recent: Vec<RemoteLog> = logs.into_iter().filter(|l| l.date.as_str() >= "2026-09-20").collect();
+        let next = Pulled { since: "2026-09-20".into(), ..pulled(recent) };
+        for round in 0..3 {
+            let started = Instant::now();
+            store.apply_pull(&account, &next, 200).unwrap();
+            let plain = started.elapsed();
+            let started = Instant::now();
+            let (impact, _) = store.apply_pull_checked(&account, &next, 200, |_| true).unwrap();
+            let checked = started.elapsed();
+            let started = Instant::now();
+            store.apply_pull_checked(&account, &next, 200, |_| false).unwrap();
+            let rolled_back = started.elapsed();
+            println!(
+                "round {round}, {} logs, {} entries in range: plain {} ms, checked {} ms, checked and rolled back {} ms",
+                next.logs.len(),
+                impact.synced_before,
+                plain.as_millis(),
+                checked.as_millis(),
+                rolled_back.as_millis()
+            );
+        }
+        drop(store);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
 }

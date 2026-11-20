@@ -4,6 +4,10 @@
 //! With `TIME_TRACKER_DEMO_FIBERY=<address>` (e.g. `http://127.0.0.1:8099`,
 //! see `build-aux/fibery-mock.py`) the first client is connected to that
 //! Fibery workspace for real; otherwise it only looks synced.
+//!
+//! With `TIME_TRACKER_DEMO_SIZE=large` it also adds five years of history
+//! (about 10,000 entries) of the clients that aren't connected, to measure
+//! how the app copes with a lot of data.
 
 use crate::format;
 use crate::report;
@@ -96,6 +100,25 @@ pub fn seed(store: &Store) -> Result<()> {
     add(briefing, &today, (8, 50), (9, 40), "")?;
     add(logo, &today, (9, 45), (10, 30), "Sketches")?;
     store.start_timer(wireframes, now - (84 * 60 + 7), &today)?;
+
+    if std::env::var("TIME_TRACKER_DEMO_SIZE").as_deref() == Ok("large") {
+        store.batch(|| {
+            // Eight hours on each weekday of the five years before this month.
+            let tasks = [logo, guidelines, invoicing];
+            let first = format::local_timestamp(&format::date_string(year, month, 1), 12, 0).unwrap_or(now);
+            for days_ago in 1..=5 * 365 {
+                let date = format::local_date(first - days_ago * 24 * 60 * 60);
+                let Some((y, m, d)) = format::date_parts(&date) else { continue };
+                if report::weekday(y, m, d) >= 5 {
+                    continue;
+                }
+                for hour in 9..17 {
+                    add(tasks[(days_ago as usize + hour as usize) % tasks.len()], &date, (hour, 0), (hour, 55), "")?;
+                }
+            }
+            Ok(())
+        })?;
+    }
     Ok(())
 }
 

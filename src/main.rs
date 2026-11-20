@@ -13,6 +13,7 @@ mod screenshot;
 mod secrets;
 mod store;
 mod sync;
+mod watchdog;
 mod widgets;
 mod window;
 

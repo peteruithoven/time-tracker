@@ -147,6 +147,18 @@ build-aux/ui-test.sh stop
 
 See the comments at the top of `build-aux/ui-test.sh` for the options; `build-aux/sdk-build.sh` alone only builds.
 
+To try what happens when Fibery data goes wrong, the mock has scenarios (deleted logs, hours that read as 0 or empty, logs without a task, no logs at all, a flood of new ones, …); see the top of `build-aux/fibery-mock.py`:
+
+```bash
+curl -d '{"scenario": "delete-logs", "count": 6}' 127.0.0.1:8099/mock
+```
+
+`--large` adds five years of demo history and 2,000 logs in the mock, and logs main loop stalls over 50 ms and how long syncs and snapshots take, to check the app stays responsive with a lot of data. A timing test of the sync's store work runs with:
+
+```bash
+build-aux/cargo-sdk.sh test --release -- --ignored --nocapture
+```
+
 The development build keeps its data in `~/.var/app/nl.peteruithoven.TimeTracker.Devel/data/time-tracker/`.
 
 ### Screenshots
