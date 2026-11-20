@@ -6,6 +6,7 @@ mod format;
 mod fuzzy;
 mod idle;
 mod invoicing;
+mod launcher;
 mod report;
 mod screenshot;
 mod secrets;

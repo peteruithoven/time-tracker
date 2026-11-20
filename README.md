@@ -10,6 +10,7 @@ Built with Rust, GTK 4 and libadwaita, packaged as a Flatpak.
 ## Features
 
 - **Timer:** one big start/stop button. Switching tasks stops the running entry and starts a new one. A running timer is saved immediately, so it survives crashes and restarts.
+- **Dock badge:** while the timer runs, the app's dock icon shows the elapsed minutes (elementary OS's dock shows "!" during the first minute). It uses the Unity LauncherEntry API, which docks such as elementary OS's support.
 - **Away time:** when you come back after 10 minutes without keyboard or mouse input (or a suspend) while the timer runs, the app asks whether to keep that time, discard it, assign it to another task or stop the timer when you left. The threshold is in Preferences. This uses GNOME's idle monitor (`org.gnome.Mutter.IdleMonitor`), which elementary OS's Gala offers too.
 - **Task picker:** fuzzy search over all tasks, recent ones first, filter per client, and create tasks (and projects) on the spot.
 - **Review:** a month per client › project › task with a column per week. Click any number to see, edit or add the entries behind it.

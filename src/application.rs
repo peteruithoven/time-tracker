@@ -63,6 +63,7 @@ mod imp {
             app.setup_accels();
             crate::sync::start();
             if !crate::screenshot::enabled() {
+                crate::launcher::start();
                 let monitor = crate::idle::Monitor::start(|away| {
                     let app = super::TimeTrackerApplication::get();
                     if let Some(window) = app.active_window().or_else(|| app.windows().into_iter().next()) {
