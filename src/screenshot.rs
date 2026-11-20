@@ -5,6 +5,9 @@
 //! - `TIME_TRACKER_SCREENSHOT_SIZE`: window size, e.g. `400x640`
 //! - `TIME_TRACKER_SCREENSHOT_VIEW`: `track` or `review`
 //! - `TIME_TRACKER_DEMO`: fill an empty database with demo data
+//! - `TIME_TRACKER_OPEN`: open a page at startup (also without a
+//!   screenshot, for UI tests): `review`, `clients`, `client:<name>`,
+//!   `preferences` or `shortcuts`
 
 use gtk::prelude::*;
 use gtk::{glib, graphene, gsk};
@@ -87,4 +90,34 @@ fn render(window: &gtk::Window, path: &str) -> Result<(), String> {
     let texture = renderer.render_texture(&node, Some(&bounds));
     renderer.unrealize();
     texture.save_to_png(path).map_err(|e| e.to_string())
+}
+
+/// Opens the page named by `TIME_TRACKER_OPEN`, once the window is shown.
+pub fn open_page(window: &gtk::Window) {
+    let Some(page) = std::env::var("TIME_TRACKER_OPEN").ok().filter(|p| !p.is_empty()) else {
+        return;
+    };
+    let window = window.clone();
+    glib::idle_add_local_once(move || {
+        let app = crate::application::TimeTrackerApplication::get();
+        match page.split_once(':') {
+            Some(("client", name)) => {
+                let clients = app.store().all_clients().unwrap_or_default();
+                let Some(client) = clients.iter().find(|c| c.name == name) else {
+                    glib::g_warning!("time-tracker", "No client named {name}");
+                    return;
+                };
+                let dialog = crate::widgets::ClientsDialog::default();
+                adw::prelude::AdwDialogExt::present(&dialog, Some(&window));
+                dialog.open_client(client.id);
+            }
+            _ => match page.as_str() {
+                "review" => {
+                    let _ = WidgetExt::activate_action(&window, "win.view-review", None);
+                }
+                "clients" | "preferences" | "shortcuts" => app.activate_action(&page, None),
+                other => glib::g_warning!("time-tracker", "Unknown page to open: {other}"),
+            },
+        }
+    });
 }

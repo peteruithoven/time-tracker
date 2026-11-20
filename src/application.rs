@@ -80,6 +80,7 @@ mod imp {
                 .active_window()
                 .unwrap_or_else(|| TimeTrackerWindow::new(&*app).upcast());
             window.present();
+            crate::screenshot::open_page(&window);
             crate::screenshot::take(&window, app.upcast_ref());
         }
     }

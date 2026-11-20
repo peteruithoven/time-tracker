@@ -1,5 +1,6 @@
 /target/
 /_build/
+/_sdk/
 /build-dir/
 /build-dir-release/
 /.flatpak-builder/

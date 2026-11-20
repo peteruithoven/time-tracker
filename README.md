@@ -108,6 +108,22 @@ build-aux/cargo-sdk.sh test
 build-aux/cargo-sdk.sh clippy
 ```
 
+To try UI changes without a Flatpak build, build into `_sdk/` in the repository (about two seconds after the first build) and run the app headless with made-up demo data, optionally connected to a mock of Fibery (`build-aux/fibery-mock.py`):
+
+```bash
+build-aux/ui-test.sh start --fibery --open clients
+```
+
+```bash
+build-aux/ui-test.sh shot window.png
+```
+
+```bash
+build-aux/ui-test.sh stop
+```
+
+See the comments at the top of `build-aux/ui-test.sh` for the options; `build-aux/sdk-build.sh` alone only builds.
+
 The development build keeps its data in `~/.var/app/nl.peteruithoven.TimeTracker.Devel/data/time-tracker/`.
 
 ### Screenshots
@@ -130,7 +146,7 @@ To change what they show, edit the demo data in [`src/demo.rs`](src/demo.rs) or 
 | `src/invoicing/` | Invoice scripts |
 | `data/` | Desktop file, AppStream metainfo, GSettings schema, icons, screenshots |
 | `po/` | Translations (gettext) |
-| `build-aux/` | Flatpak manifests and helper scripts |
+| `build-aux/` | Flatpak manifests, build and test scripts, the Fibery mock |
 
 ## License
 

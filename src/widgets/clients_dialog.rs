@@ -252,6 +252,11 @@ impl ClientsDialog {
         entry.grab_focus();
     }
 
+    /// Opens a client's page, e.g. for screenshots (see `screenshot::open_page`).
+    pub fn open_client(&self, client_id: i64) {
+        self.show_client(client_id);
+    }
+
     fn show_client(&self, client_id: i64) {
         let store = TimeTrackerApplication::get().store();
         let Some(client) = store.client(client_id).ok().flatten() else {

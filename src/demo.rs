@@ -1,5 +1,9 @@
-//! Made-up demo data for screenshots. Dates are relative to today, so the
-//! screenshots always show a believable current month.
+//! Made-up demo data for screenshots and UI tests. Dates are relative to
+//! today, so the screenshots always show a believable current month.
+//!
+//! With `TIME_TRACKER_DEMO_FIBERY=<address>` (e.g. `http://127.0.0.1:8099`,
+//! see `build-aux/fibery-mock.py`) the first client is connected to that
+//! Fibery workspace for real; otherwise it only looks synced.
 
 use crate::format;
 use crate::report;
@@ -40,7 +44,10 @@ pub fn seed(store: &Store) -> Result<()> {
     let logo = task(northwind, brand, "Logo concepts")?;
     let guidelines = task(northwind, brand, "Brand guidelines")?;
     let invoicing = task(personal, admin, "Invoicing")?;
-    store.demo_mark_remote(studio)?;
+    match std::env::var("TIME_TRACKER_DEMO_FIBERY") {
+        Ok(workspace) if !workspace.is_empty() => connect_mock(store, studio, &workspace, now)?,
+        _ => store.demo_mark_remote(studio)?,
+    }
 
     let add = |task_id, date: &str, (h1, m1): (u32, u32), (h2, m2): (u32, u32), note: &str| -> Result<()> {
         let (Some(start), Some(end)) = (format::local_timestamp(date, h1, m1), format::local_timestamp(date, h2, m2)) else {
@@ -90,4 +97,43 @@ pub fn seed(store: &Store) -> Result<()> {
     add(logo, &today, (9, 45), (10, 30), "Sketches")?;
     store.start_timer(wireframes, now - (84 * 60 + 7), &today)?;
     Ok(())
+}
+
+/// Connects `client_id` to the mock Fibery workspace at `workspace`, with
+/// the mock's (made-up) schema and a token in the database.
+fn connect_mock(store: &Store, client_id: i64, workspace: &str, now: i64) -> Result<()> {
+    let field = |name: &str| Some(format!("Projects/{name}"));
+    let mapping = crate::fibery::Mapping {
+        task_type: "Projects/Task".into(),
+        task_name: "Projects/name".into(),
+        task_project: field("Project"),
+        task_state: Some("workflow/state".into()),
+        task_assignees: Some("assignments/assignees".into()),
+        task_timing: field("Timing"),
+        project_type: field("Project"),
+        project_name: field("name"),
+        project_state: Some("workflow/state".into()),
+        log_type: "Projects/Time log".into(),
+        log_task: "Projects/Task".into(),
+        log_user: field("User"),
+        log_hours: "Projects/Time spent".into(),
+        log_date: "Projects/Date".into(),
+        log_note: field("Notes"),
+        log_start: field("Start"),
+        log_end: field("End"),
+        ..Default::default()
+    };
+    let mapping = serde_json::to_string(&mapping).unwrap_or_default();
+    let account = store.add_account(
+        &crate::store::NewAccount {
+            client_id,
+            service: "fibery",
+            workspace,
+            user_id: "me",
+            user_name: "Demo User",
+            mapping: &mapping,
+        },
+        now,
+    )?;
+    store.set_account_token(account, Some("demo-token"))
 }
