@@ -8,6 +8,7 @@
     <file preprocess="xml-stripblanks" alias="new_project_dialog.ui">widgets/new_project_dialog.ui</file>
     <file preprocess="xml-stripblanks" alias="review_page.ui">widgets/review_page.ui</file>
     <file preprocess="xml-stripblanks" alias="entry_dialog.ui">widgets/entry_dialog.ui</file>
+    <file preprocess="xml-stripblanks" alias="sync_review.ui">widgets/sync_review.ui</file>
     <file compressed="true">style.css</file>
   </gresource>
 </gresources>

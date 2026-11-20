@@ -40,6 +40,17 @@ Hours are sent with two decimals, like Fibery's own timer. Totals in the app use
 
 **Conflicts:** Fibery wins. If a time log changed in Fibery while a local edit of it was still waiting to be pushed, the Fibery version replaces the local one. Local edits that were pushed are never overwritten by older data.
 
+**When syncing pauses:** before applying what it pulled, the app works out what that would change here. It pauses syncing (and asks) when a pull would:
+
+- remove or change more than 5 entries (a different duration, date, task or project; a new note or a renamed task doesn't count),
+- remove every synced entry of the last two months (even just one),
+- lower the tracked time by more than 4 hours (removed entries plus shortened ones), or
+- add more than 50 entries.
+
+The very first sync of a client never pauses, since it brings in a year of history.
+
+While paused, nothing changes here and nothing is pushed: your own changes wait. A banner and the header bar icon say so, and **Review** lists what would be removed, changed and added. **Keep Paused** leaves everything as it is; **Apply Changes** saves a snapshot first and then applies the changes. The app keeps checking every 5 minutes: once Fibery returns data that's within these limits again (say, after you fixed the API key's access or the Time Logs settings), syncing resumes by itself. Time logs that come back without a task or date are left alone rather than removed, and hours that read as empty keep the duration the app knows.
+
 ## Backups
 
 The app saves a snapshot of its database every day it runs, and right before a sync removes entries (or when you change a client's Time Logs settings). A snapshot is a complete copy of the SQLite database without API keys, as one file you can open with any SQLite tool.

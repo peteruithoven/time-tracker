@@ -1,6 +1,6 @@
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gettextrs::gettext;
+use gettextrs::{gettext, ngettext};
 use gtk::{gio, glib};
 
 use crate::config::{APP_ID, PROFILE};
@@ -38,6 +38,8 @@ mod imp {
         pub sync_detail: TemplateChild<gtk::Label>,
         #[template_child]
         pub sync_now_button: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub sync_banner: TemplateChild<adw::Banner>,
         pub settings: gio::Settings,
     }
 
@@ -57,6 +59,7 @@ mod imp {
                 sync_title: TemplateChild::default(),
                 sync_detail: TemplateChild::default(),
                 sync_now_button: TemplateChild::default(),
+                sync_banner: TemplateChild::default(),
                 settings: gio::Settings::new(APP_ID),
             }
         }
@@ -146,12 +149,26 @@ mod imp {
                 month("next-month", 1),
             ]);
 
-            self.sync_now_button.connect_clicked(|button| {
-                if let Some(popover) = button.ancestor(gtk::Popover::static_type()) {
-                    popover.downcast::<gtk::Popover>().expect("is a popover").popdown();
+            self.sync_now_button.connect_clicked(glib::clone!(
+                #[weak]
+                obj,
+                move |button| {
+                    if let Some(popover) = button.ancestor(gtk::Popover::static_type()) {
+                        popover.downcast::<gtk::Popover>().expect("is a popover").popdown();
+                    }
+                    // "Review…" while a sync is held.
+                    if obj.imp().sync_banner.is_revealed() {
+                        obj.review_held_sync();
+                    } else {
+                        crate::sync::sync(true);
+                    }
                 }
-                crate::sync::sync(true);
-            });
+            ));
+            self.sync_banner.connect_button_clicked(glib::clone!(
+                #[weak]
+                obj,
+                move |_| obj.review_held_sync()
+            ));
             crate::application::TimeTrackerApplication::get().connect_sync_changed(glib::clone!(
                 #[weak]
                 obj,
@@ -220,7 +237,19 @@ impl TimeTrackerWindow {
                 button.add_css_class("warning");
                 "dialog-warning-symbolic"
             }
+            Status::Paused(_) => {
+                button.add_css_class("warning");
+                "media-playback-pause-symbolic"
+            }
         };
+        // Held pulls stay visible while the account checks again (syncing).
+        let store = crate::application::TimeTrackerApplication::get().store();
+        let held = store.accounts().unwrap_or_default().iter().find_map(crate::store::Account::held);
+        let paused = held.as_ref();
+        imp.sync_banner.set_revealed(paused.is_some());
+        if let Some(impact) = paused {
+            imp.sync_banner.set_title(&crate::sync::paused_banner(impact));
+        }
         imp.sync_icon.set_icon_name(Some(icon));
         // A dot while entries wait to be sent.
         let waiting = matches!(status, Status::Pending(n) | Status::Offline(n) if n > 0);
@@ -231,15 +260,65 @@ impl TimeTrackerWindow {
         imp.sync_title.set_label(&title);
         imp.sync_detail.set_label(&detail);
         imp.sync_detail.set_visible(!detail.is_empty());
-        imp.sync_now_button.set_sensitive(status != Status::Syncing);
+        imp.sync_now_button.set_sensitive(status != Status::Syncing || paused.is_some());
+        imp.sync_now_button.set_label(&if paused.is_some() { gettext("Review…") } else { gettext("Sync Now") });
+        if paused.is_some() {
+            imp.sync_now_button.add_css_class("suggested-action");
+        } else {
+            imp.sync_now_button.remove_css_class("suggested-action");
+        }
 
-        let store = crate::application::TimeTrackerApplication::get().store();
         let last_sync = store.accounts().unwrap_or_default().iter().filter_map(|a| a.last_sync_at).max();
         imp.sync_last.set_label(&match last_sync {
             Some(at) => gettext("Last sync {}").replace("{}", &moment(at)),
             None => gettext("Not synced yet"),
         });
-        self.fill_sync_list(&store.pending_entries().unwrap_or_default());
+        match paused {
+            Some(impact) => self.fill_paused_list(impact),
+            None => self.fill_sync_list(&store.pending_entries().unwrap_or_default()),
+        }
+    }
+
+    /// Opens the review of the first held sync.
+    fn review_held_sync(&self) {
+        let store = crate::application::TimeTrackerApplication::get().store();
+        if let Some(account) = store.accounts().unwrap_or_default().into_iter().find(|a| a.held_pull.is_some()) {
+            crate::widgets::sync_review::present(self, &account);
+        }
+    }
+
+    /// What a held sync would remove, change and add, in short.
+    fn fill_paused_list(&self, impact: &crate::store::PullImpact) {
+        use crate::widgets::sync_review::signed_hm;
+        let list = &*self.imp().sync_list;
+        list.remove_all();
+        let entries = |n: usize| ngettext("{} entry", "{} entries", n as u32).replace("{}", &n.to_string());
+        let span = |dates: Vec<&str>| match (dates.iter().min(), dates.iter().max()) {
+            (Some(first), Some(last)) if first != last => format!(" · {} – {}", format::short_date(first), format::short_date(last)),
+            (Some(day), _) => format!(" · {}", format::short_date(day)),
+            _ => String::new(),
+        };
+        let add = |title: String, subtitle: String, total: String| {
+            let row = adw::ActionRow::builder().title(title).subtitle(subtitle).use_markup(false).build();
+            row.add_suffix(&gtk::Label::builder().label(total).css_classes(["numeric"]).build());
+            list.append(&row);
+        };
+        if !impact.removed.is_empty() {
+            let secs: i64 = impact.removed.iter().map(|e| e.secs).sum();
+            let dates = impact.removed.iter().map(|e| e.date.as_str()).collect();
+            add(gettext("Removed in Fibery"), entries(impact.removed.len()) + &span(dates), format::hm(secs));
+        }
+        if !impact.changed.is_empty() {
+            let secs: i64 = impact.changed.iter().map(|c| c.after.secs - c.before.secs).sum();
+            let dates = impact.changed.iter().map(|c| c.before.date.as_str()).collect();
+            add(gettext("Changed in Fibery"), entries(impact.changed.len()) + &span(dates), signed_hm(secs));
+        }
+        if !impact.added.is_empty() {
+            let secs: i64 = impact.added.iter().map(|e| e.secs).sum();
+            let dates = impact.added.iter().map(|e| e.date.as_str()).collect();
+            add(gettext("Added in Fibery"), entries(impact.added.len()) + &span(dates), format::hm(secs));
+        }
+        list.set_visible(true);
     }
 
     /// The entries waiting to sync, newest first.

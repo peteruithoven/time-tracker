@@ -11,8 +11,10 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 pub use models::{Account, Client, Entry, Project, Task};
 
+mod impact;
 mod sync;
 
+pub use impact::{Change, EntryView, PullImpact};
 pub use sync::{NewAccount, PendingEntry};
 
 pub type Result<T> = rusqlite::Result<T>;
@@ -113,6 +115,11 @@ ALTER TABLE clients ADD COLUMN invoice_settings TEXT;
 -- Earlier ids of the Moneybird invoice script.
 UPDATE clients SET invoice_script = 'moneybird'
 WHERE invoice_script LIKE '%-moneybird';
+"#, r#"
+-- A pull that would change more than usual, held until reviewed (JSON of
+-- store::PullImpact), and the impact approved to apply anyway.
+ALTER TABLE accounts ADD COLUMN held_pull TEXT;
+ALTER TABLE accounts ADD COLUMN approved_pull TEXT;
 "#];
 
 const TASK_SELECT: &str = "
@@ -614,6 +621,11 @@ mod tests {
             let store = Store::open(&path, "Personal").unwrap();
             let client = store.clients().unwrap()[0].id;
             store.set_client_invoice_script(client, Some("old-moneybird"), Some("{}")).unwrap();
+            // Back to a database from before migration 5 (and later ones).
+            store
+                .conn
+                .execute_batch("ALTER TABLE accounts DROP COLUMN held_pull; ALTER TABLE accounts DROP COLUMN approved_pull;")
+                .unwrap();
             store.conn.pragma_update(None, "user_version", 4).unwrap();
         }
         let store = Store::open(&path, "Personal").unwrap();

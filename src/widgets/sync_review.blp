@@ -1,0 +1,148 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Design P and P2: what a held sync would change, filled in by
+// sync_review.rs.
+Adw.Dialog dialog {
+  title: _("Review Changes");
+  content-width: 420;
+  content-height: 680;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    content: ScrolledWindow {
+      hscrollbar-policy: never;
+
+      child: Adw.Clamp {
+        maximum-size: 560;
+
+        child: Box {
+          orientation: vertical;
+          spacing: 8;
+          margin-top: 4;
+          margin-bottom: 18;
+          margin-start: 16;
+          margin-end: 16;
+
+          Label intro {
+            xalign: 0;
+            wrap: true;
+
+            styles [
+              "dim-label",
+            ]
+          }
+
+          // Everything missing: probably access or settings.
+          Box callout {
+            visible: false;
+            spacing: 10;
+
+            styles [
+              "review-callout",
+            ]
+
+            Image {
+              icon-name: "dialog-warning-symbolic";
+              valign: start;
+
+              styles [
+                "warning",
+              ]
+            }
+
+            Box {
+              orientation: vertical;
+              spacing: 2;
+
+              Label {
+                label: _("Probably Not Deleted");
+                xalign: 0;
+                wrap: true;
+
+                styles [
+                  "heading",
+                ]
+              }
+
+              Label {
+                label: _("This usually means the API key lost access to the space, or a field in the Time Logs settings changed.");
+                xalign: 0;
+                wrap: true;
+
+                styles [
+                  "dim-label",
+                ]
+              }
+            }
+          }
+
+          ListBox time_logs_list {
+            visible: false;
+            selection-mode: none;
+
+            styles [
+              "boxed-list",
+            ]
+
+            Adw.ActionRow time_logs_row {
+              title: _("Check Time Logs Settings");
+              activatable: true;
+
+              [suffix]
+              Image {
+                icon-name: "go-next-symbolic";
+              }
+            }
+          }
+
+          Box sections {
+            orientation: vertical;
+            spacing: 8;
+          }
+
+          Label {
+            label: _("Applying first saves a snapshot of your data, so you can get these entries back. Snapshots are in Preferences › Backups.");
+            xalign: 0;
+            wrap: true;
+            margin-top: 6;
+            margin-start: 4;
+            margin-end: 4;
+
+            styles [
+              "dim-label",
+              "caption",
+            ]
+          }
+        };
+      };
+    };
+
+    // Not homogeneous: "Remove 214 Entries" would make the dialog wider
+    // than a narrow window.
+    [bottom]
+    Box {
+      spacing: 8;
+      margin-top: 12;
+      margin-bottom: 16;
+      margin-start: 16;
+      margin-end: 16;
+
+      Button keep_button {
+        label: _("Keep Paused");
+        hexpand: true;
+      }
+
+      Button apply_button {
+        label: _("Apply Changes");
+        hexpand: true;
+
+        styles [
+          "destructive-action",
+        ]
+      }
+    }
+  };
+}

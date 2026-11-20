@@ -19,6 +19,8 @@ src/widgets/preferences_dialog.rs
 src/widgets/project_picker.rs
 src/widgets/review_page.blp
 src/widgets/review_page.rs
+src/widgets/sync_review.blp
+src/widgets/sync_review.rs
 src/widgets/task_picker.blp
 src/widgets/task_picker.rs
 src/widgets/track_page.blp

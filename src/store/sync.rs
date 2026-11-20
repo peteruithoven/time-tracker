@@ -5,12 +5,12 @@ use std::collections::HashSet;
 
 use rusqlite::{OptionalExtension, Row, params};
 
-use super::{Account, Result, Store};
+use super::{Account, Change, EntryView, PullImpact, Result, Store};
 use crate::fibery::sync::{LogFields, Push, PushResult, Pulled, RemoteLog, RemoteProject, RemoteTask, TaskRef, hours};
 
 const ACCOUNT_SELECT: &str = "
     SELECT id, client_id, service, workspace, user_id, user_name, mapping, mirror_timer,
-           token, last_sync_at, last_error, created_at
+           token, last_sync_at, last_error, created_at, held_pull, approved_pull
     FROM accounts";
 
 /// Colors handed out to projects that come from a service.
@@ -30,6 +30,8 @@ fn account_from_row(row: &Row) -> Result<Account> {
         last_sync_at: row.get(9)?,
         last_error: row.get(10)?,
         created_at: row.get(11)?,
+        held_pull: row.get(12)?,
+        approved_pull: row.get(13)?,
     })
 }
 
@@ -121,6 +123,29 @@ impl Store {
                 .conn
                 .execute("UPDATE accounts SET last_error = ?1 WHERE id = ?2", params![error, id])?,
         };
+        Ok(())
+    }
+
+    /// Holds a pull for review, or releases it (`None`).
+    pub fn set_account_held(&self, id: i64, impact: Option<&PullImpact>) -> Result<()> {
+        let json = impact.map(|i| serde_json::to_string(i).unwrap_or_default());
+        self.conn.execute("UPDATE accounts SET held_pull = ?1 WHERE id = ?2", params![json, id])?;
+        Ok(())
+    }
+
+    /// Approves the held pull: it's applied on the next sync, unless that
+    /// would change more. Syncing resumes.
+    pub fn approve_held_pull(&self, id: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE accounts SET approved_pull = held_pull, held_pull = NULL WHERE id = ?1",
+            [id],
+        )?;
+        Ok(())
+    }
+
+    /// Forgets an approval once a pull was applied.
+    pub fn clear_approved_pull(&self, id: i64) -> Result<()> {
+        self.conn.execute("UPDATE accounts SET approved_pull = NULL WHERE id = ?1", [id])?;
         Ok(())
     }
 
@@ -277,6 +302,111 @@ impl Store {
     /// still waiting to be pushed while the remote log didn't change.
     pub fn apply_pull(&self, account: &Account, pulled: &Pulled, now: i64) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
+        self.apply_pull_in(account, pulled, now)?;
+        tx.commit()
+    }
+
+    /// Applies a pull in a transaction and works out what it changes; keeps
+    /// it only when `keep` says so (otherwise rolls back). Returns the impact
+    /// and whether it was kept.
+    pub fn apply_pull_checked(
+        &self,
+        account: &Account,
+        pulled: &Pulled,
+        now: i64,
+        keep: impl FnOnce(&PullImpact) -> bool,
+    ) -> Result<(PullImpact, bool)> {
+        let tx = self.conn.unchecked_transaction()?;
+        let (before, synced_before) = self.entry_views(account.client_id, &pulled.since, &pulled_ids(pulled), &[])?;
+        self.apply_pull_in(account, pulled, now)?;
+        let before_ids: Vec<i64> = before.keys().copied().collect();
+        let (after, _) = self.entry_views(account.client_id, &pulled.since, &[], &before_ids)?;
+
+        let mut impact = PullImpact {
+            client: self.client(account.client_id)?.map(|c| c.name).unwrap_or_default(),
+            synced_before,
+            ..Default::default()
+        };
+        for (id, old) in &before {
+            match after.get(id) {
+                None => impact.removed.push(old.clone()),
+                Some(new) if !old.same_as(new) => impact.changed.push(Change { before: old.clone(), after: new.clone() }),
+                Some(_) => {}
+            }
+        }
+        impact.added = after.iter().filter(|(id, _)| !before.contains_key(id)).map(|(_, e)| e.clone()).collect();
+        let impact = impact.sorted();
+
+        let kept = keep(&impact);
+        if kept {
+            tx.commit()?;
+        }
+        Ok((impact, kept))
+    }
+
+    /// The entries of a client a pull can touch: those from `since`, plus
+    /// those of the pulled `remote_ids` and the `ids` outside that range.
+    /// Also counts the synced ones a pull could remove.
+    fn entry_views(
+        &self,
+        client_id: i64,
+        since: &str,
+        remote_ids: &[&str],
+        ids: &[i64],
+    ) -> Result<(std::collections::HashMap<i64, EntryView>, usize)> {
+        const SELECT: &str = "SELECT e.id, e.task_id, t.name, t.project_id, p.name, e.date, e.start_at, e.end_at,
+                    e.duration_secs, e.remote_id IS NOT NULL AND e.dirty = 0
+             FROM entries e JOIN tasks t ON t.id = e.task_id LEFT JOIN projects p ON p.id = t.project_id
+             WHERE e.deleted = 0 AND t.client_id = ?1";
+        let view = |r: &Row| -> Result<(i64, EntryView, bool)> {
+            let (start_at, end_at, duration): (Option<i64>, Option<i64>, Option<i64>) = (r.get(6)?, r.get(7)?, r.get(8)?);
+            let secs = match (start_at, end_at) {
+                (Some(start), Some(end)) => end - start,
+                (Some(_), None) => 0,
+                _ => duration.unwrap_or_default(),
+            };
+            let entry = EntryView {
+                task_id: r.get(1)?,
+                task: r.get(2)?,
+                project_id: r.get(3)?,
+                project: r.get(4)?,
+                date: r.get(5)?,
+                start_at,
+                end_at,
+                secs,
+            };
+            let removable = r.get::<_, bool>(9)? && !(start_at.is_some() && end_at.is_none());
+            Ok((r.get(0)?, entry, removable))
+        };
+        let mut views = std::collections::HashMap::new();
+        let mut synced = 0;
+        let mut stmt = self.conn.prepare_cached(&format!("{SELECT} AND e.date >= ?2"))?;
+        for row in stmt.query_map(params![client_id, since], view)? {
+            let (id, entry, removable) = row?;
+            synced += usize::from(removable);
+            views.insert(id, entry);
+        }
+        let mut by_remote = self.conn.prepare_cached(&format!("{SELECT} AND e.remote_id = ?2"))?;
+        for remote_id in remote_ids {
+            for row in by_remote.query_map(params![client_id, remote_id], view)? {
+                let (id, entry, _) = row?;
+                views.entry(id).or_insert(entry);
+            }
+        }
+        let mut by_id = self.conn.prepare_cached(&format!("{SELECT} AND e.id = ?2"))?;
+        for id in ids {
+            if views.contains_key(id) {
+                continue;
+            }
+            for row in by_id.query_map(params![client_id, id], view)? {
+                let (id, entry, _) = row?;
+                views.insert(id, entry);
+            }
+        }
+        Ok((views, synced))
+    }
+
+    fn apply_pull_in(&self, account: &Account, pulled: &Pulled, now: i64) -> Result<()> {
         let sync = Sync { store: self, client_id: account.client_id, now };
 
         for project in &pulled.projects {
@@ -325,8 +455,13 @@ impl Store {
             self.conn.execute("DELETE FROM entries WHERE id = ?1", [id])?;
         }
         drop(stmt);
-        tx.commit()
+        Ok(())
     }
+}
+
+/// The ids of the pulled logs.
+fn pulled_ids(pulled: &Pulled) -> Vec<&str> {
+    pulled.logs.iter().map(|l| l.id.as_str()).collect()
 }
 
 /// Entries waiting to be pushed: changed locally, of a connected client.
@@ -687,4 +822,91 @@ mod tests {
         let account = store.account_for_client(account.client_id).unwrap().unwrap();
         assert_eq!(store.pending_pushes(&account).unwrap().len(), 1, "running entry waits without mirroring");
     }
+
+    fn eight_logs() -> Vec<RemoteLog> {
+        (1..=8).map(|i| log(&format!("l{i}"), "t1", &format!("2026-11-{:02}", 10 + i), "m1")).collect()
+    }
+
+    #[test]
+    fn measures_what_a_pull_changes_and_rolls_back() {
+        let (store, account) = connected();
+        store.apply_pull(&account, &pulled(eight_logs()), 200).unwrap();
+        let account = store.account_for_client(account.client_id).unwrap().unwrap();
+
+        let mut logs = eight_logs();
+        logs.remove(0); // l1 deleted in Fibery
+        logs[0].task = RemoteTask { hidden: true, ..remote_task("t2") }; // l2 on another task
+        logs[1].hours = 0.0; // l3's hours now read as 0
+        logs[2].note = "Only the note changed".into(); // l4: not a change
+        logs.push(log("l9", "t1", "2026-11-20", "m1")); // added
+        let next = pulled(logs);
+
+        let (impact, kept) = store.apply_pull_checked(&account, &next, 300, |_| false).unwrap();
+        assert!(!kept);
+        assert_eq!(impact.client, "Acme");
+        assert_eq!(impact.synced_before, 8);
+        assert_eq!(impact.removed.len(), 1);
+        assert_eq!(impact.removed[0].date, "2026-11-11");
+        assert_eq!(impact.changed.len(), 2);
+        let zeroed = impact.changed.iter().find(|c| c.after.secs == 0).unwrap();
+        assert_eq!(zeroed.before.secs, 5_400);
+        assert!(impact.changed.iter().any(|c| c.before.task_id != c.after.task_id));
+        assert_eq!(impact.added.len(), 1);
+        assert_eq!(impact.lost_secs(), 2 * 5_400);
+        assert!(!impact.should_hold(), "3 hours, 3 entries: below the thresholds");
+
+        // Rolled back: nothing changed.
+        let entries = store.entries_between("2026-11-01", "2026-11-30").unwrap();
+        assert_eq!(entries.len(), 8);
+        assert!(entries.iter().all(|e| e.duration(0) == 5_400));
+
+        let (_, kept) = store.apply_pull_checked(&account, &next, 300, |_| true).unwrap();
+        assert!(kept);
+        assert_eq!(store.entries_between("2026-11-01", "2026-11-30").unwrap().len(), 8, "one gone, one added");
+    }
+
+    #[test]
+    fn an_empty_pull_means_all_entries_missing() {
+        let (store, account) = connected();
+        store.apply_pull(&account, &pulled(eight_logs()), 200).unwrap();
+        let account = store.account_for_client(account.client_id).unwrap().unwrap();
+        let (impact, kept) = store.apply_pull_checked(&account, &pulled(Vec::new()), 300, |i| !i.should_hold()).unwrap();
+        assert!(!kept);
+        assert!(impact.all_missing());
+        assert_eq!(impact.removed.len(), 8);
+        assert_eq!(store.entries_between("2026-11-01", "2026-11-30").unwrap().len(), 8);
+    }
+
+    #[test]
+    fn a_task_moved_to_another_project_changes_its_entries() {
+        let (store, account) = connected();
+        store.apply_pull(&account, &pulled(eight_logs()), 200).unwrap();
+        let account = store.account_for_client(account.client_id).unwrap().unwrap();
+        let other = RemoteProject { id: "p2".into(), name: "Mobile app".into(), archived: false };
+        let mut next = pulled(eight_logs());
+        next.tasks[0].project = Some(other.clone());
+        for log in &mut next.logs {
+            log.task.project = Some(other.clone());
+        }
+        let (impact, _) = store.apply_pull_checked(&account, &next, 300, |_| false).unwrap();
+        assert_eq!(impact.changed.len(), 8);
+        assert!(impact.changed.iter().all(|c| c.after.project.as_deref() == Some("Mobile app")));
+        assert!(impact.should_hold());
+    }
+
+    #[test]
+    fn holds_and_approves_a_pull() {
+        let (store, account) = connected();
+        let impact = PullImpact { client: "Acme".into(), synced_before: 3, ..Default::default() };
+        store.set_account_held(account.id, Some(&impact)).unwrap();
+        let held = store.account_for_client(account.client_id).unwrap().unwrap();
+        assert_eq!(held.held(), Some(impact.clone()));
+        store.approve_held_pull(account.id).unwrap();
+        let approved = store.account_for_client(account.client_id).unwrap().unwrap();
+        assert_eq!(approved.held(), None);
+        assert_eq!(approved.approved(), Some(impact));
+        store.clear_approved_pull(account.id).unwrap();
+        assert_eq!(store.account_for_client(account.client_id).unwrap().unwrap().approved(), None);
+    }
+
 }

@@ -4,6 +4,7 @@ blueprints = custom_target(
     'widgets/entry_dialog.blp',
     'widgets/new_project_dialog.blp',
     'widgets/review_page.blp',
+    'widgets/sync_review.blp',
     'widgets/task_picker.blp',
     'widgets/track_page.blp',
     'keyboard_shortcuts.blp',

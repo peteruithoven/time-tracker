@@ -8,6 +8,7 @@ mod new_project_dialog;
 pub mod preferences_dialog;
 mod project_picker;
 mod review_page;
+pub mod sync_review;
 mod task_picker;
 mod track_page;
 

@@ -104,4 +104,18 @@ pub struct Account {
     pub last_sync_at: Option<i64>,
     pub last_error: Option<String>,
     pub created_at: i64,
+    /// A pull held for review (JSON of `PullImpact`).
+    pub held_pull: Option<String>,
+    /// A held pull approved to apply anyway (JSON of `PullImpact`).
+    pub approved_pull: Option<String>,
+}
+
+impl Account {
+    pub fn held(&self) -> Option<super::PullImpact> {
+        serde_json::from_str(self.held_pull.as_deref()?).ok()
+    }
+
+    pub fn approved(&self) -> Option<super::PullImpact> {
+        serde_json::from_str(self.approved_pull.as_deref()?).ok()
+    }
 }

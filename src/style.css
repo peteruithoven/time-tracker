@@ -185,3 +185,10 @@ menubutton.task-button > button:checked {
 .review-header-cell {
   padding: 0 11px;
 }
+
+/* Review Changes: "Probably Not Deleted" */
+.review-callout {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background-color: color-mix(in srgb, currentColor 5%, transparent);
+}

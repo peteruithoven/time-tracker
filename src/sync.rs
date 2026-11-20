@@ -3,18 +3,24 @@
 //! A full sync (push + pull) runs at startup, every 5 minutes, when the
 //! network comes back and on "Sync Now". Local changes are pushed a few
 //! seconds after they happen.
+//!
+//! A pull that would remove or change more than usual is held for review
+//! (see `store::PullImpact::should_hold`): the account then only pulls, to
+//! see whether the cause went away, and pushes nothing until it's approved.
+//! A snapshot is taken before any pull that removes entries.
 
 use std::cell::RefCell;
 
-use gettextrs::gettext;
+use gettextrs::{gettext, ngettext};
 use gtk::prelude::*;
 use gtk::{gio, glib};
 
 use crate::application::TimeTrackerApplication;
+use crate::backup;
 use crate::fibery::{self, Client, Error, Mapping};
 use crate::format;
 use crate::secrets;
-use crate::store::Account;
+use crate::store::{Account, PullImpact, Store};
 
 const FULL_SYNC_INTERVAL: u32 = 5 * 60;
 const PUSH_DELAY: u32 = 3;
@@ -29,6 +35,8 @@ pub enum Status {
     Pending(i64),
     Offline(i64),
     Error(String),
+    /// A pull is held for review (the first held account's impact).
+    Paused(Box<PullImpact>),
 }
 
 #[derive(Default)]
@@ -81,6 +89,10 @@ pub fn refresh_status() {
         return;
     }
     if STATE.with_borrow(|s| s.running) {
+        return;
+    }
+    if let Some(impact) = accounts.iter().find_map(Account::held) {
+        set_status(Status::Paused(Box::new(impact)));
         return;
     }
     if let Some(error) = accounts.iter().find_map(|a| a.last_error.clone()) {
@@ -179,7 +191,9 @@ async fn run(full: bool) -> Status {
     let mut error: Option<String> = None;
     let mut changed = false;
     for account in accounts {
+        // While a pull is held, only pull: nothing is pushed until it's reviewed.
         let pushes = match store.pending_pushes(&account) {
+            Ok(_) if account.held_pull.is_some() => Vec::new(),
             Ok(pushes) => pushes,
             Err(err) => {
                 error = Some(err.to_string());
@@ -229,9 +243,9 @@ async fn run(full: bool) -> Status {
             error = Some(err.to_string());
         }
         if let Some(pulled) = &response.pulled
-            && let Err(err) = store.apply_pull(&account, pulled, now)
+            && let Err(err) = apply_pulled(&store, &account, pulled, now).await
         {
-            error = Some(err.to_string());
+            error = Some(err);
         }
         let push_error = response.pushed.iter().find_map(|r| r.result.clone().err());
         let sync_error = response.error.or(push_error);
@@ -251,7 +265,9 @@ async fn run(full: bool) -> Status {
         app.data_changed();
     }
     let pending = store.pending_count().unwrap_or(0);
-    if offline {
+    if let Some(impact) = store.accounts().unwrap_or_default().iter().find_map(Account::held) {
+        Status::Paused(Box::new(impact))
+    } else if offline {
         Status::Offline(pending)
     } else if let Some(error) = error {
         Status::Error(error)
@@ -260,6 +276,72 @@ async fn run(full: bool) -> Status {
     } else {
         Status::Synced(Some(format::now()))
     }
+}
+
+/// Applies a pull, unless it changes more than usual: then it's held for
+/// review (or applied when approved). Takes a snapshot first when entries
+/// would be removed.
+async fn apply_pulled(store: &Store, account: &Account, pulled: &fibery::sync::Pulled, now: i64) -> Result<(), String> {
+    let first_sync = account.last_sync_at.is_none();
+    let started = std::time::Instant::now();
+    let (impact, applied) = store
+        .apply_pull_checked(account, pulled, now, |impact| {
+            impact.removed.is_empty() && (first_sync || !impact.should_hold())
+        })
+        .map_err(|e| e.to_string())?;
+    glib::g_debug!(
+        "time-tracker",
+        "Pull of {} logs checked in {} ms: {} removed, {} changed, {} added{}",
+        pulled.logs.len(),
+        started.elapsed().as_millis(),
+        impact.removed.len(),
+        impact.changed.len(),
+        impact.added.len(),
+        if applied { "" } else { " (rolled back)" }
+    );
+    if !applied {
+        let approved = account.approved().is_some_and(|a| impact.within(&a));
+        if !first_sync && impact.should_hold() && !approved {
+            return store.set_account_held(account.id, Some(&impact)).map_err(|e| e.to_string());
+        }
+        // Removes entries: keep a copy first. A failed snapshot is logged,
+        // but doesn't stop syncing (the default folder is the fallback).
+        let _ = backup::snapshot(backup::Kind::BeforeSync).await;
+        store.apply_pull(account, pulled, format::now()).map_err(|e| e.to_string())?;
+    }
+    if account.held_pull.is_some() {
+        // The cause went away (or it was approved): resume pushing too.
+        store.set_account_held(account.id, None).map_err(|e| e.to_string())?;
+        STATE.with_borrow_mut(|s| s.again = Some(s.again.unwrap_or(false)));
+    }
+    if account.approved_pull.is_some() {
+        store.clear_approved_pull(account.id).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Applies the held pull of `account_id` anyway (after a snapshot), and
+/// resumes syncing.
+pub fn approve(account_id: i64) {
+    let store = TimeTrackerApplication::get().store();
+    if let Err(err) = store.approve_held_pull(account_id) {
+        glib::g_critical!("time-tracker", "Could not approve the held sync: {err}");
+        return;
+    }
+    refresh_status();
+    sync(true);
+}
+
+/// The banner's text for a held pull.
+pub fn paused_banner(impact: &PullImpact) -> String {
+    let (count, text) = if !impact.removed.is_empty() {
+        (impact.removed.len(), ngettext("Fibery sync paused: it would remove {} entry", "Fibery sync paused: it would remove {} entries", impact.removed.len() as u32))
+    } else if !impact.changed.is_empty() {
+        (impact.changed.len(), ngettext("Fibery sync paused: it would change {} entry", "Fibery sync paused: it would change {} entries", impact.changed.len() as u32))
+    } else {
+        (impact.added.len(), ngettext("Fibery sync paused: it would add {} entry", "Fibery sync paused: it would add {} entries", impact.added.len() as u32))
+    };
+    text.replace("{}", &count.to_string())
 }
 
 /// Short human-readable status, e.g. for the header bar popover.
@@ -287,5 +369,10 @@ pub fn describe(status: &Status) -> (String, String) {
             },
         ),
         Status::Error(message) => (gettext("Sync Problem"), message.clone()),
+        Status::Paused(impact) => (
+            gettext("Sync Paused"),
+            gettext("{} — Fibery would change more than usual. Nothing changes here, and waiting entries stay queued, until you review.")
+                .replace("{}", &impact.client),
+        ),
     }
 }

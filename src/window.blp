@@ -114,6 +114,12 @@ template $TimeTrackerWindow: Adw.ApplicationWindow {
       }
     }
 
+    // Design O: a pull from Fibery is held for review.
+    [top]
+    Adw.Banner sync_banner {
+      button-label: _("Review");
+    }
+
     content: Adw.ViewStack view_stack {
       Adw.ViewStackPage {
         name: "track";
